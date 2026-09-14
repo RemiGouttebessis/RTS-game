@@ -1,15 +1,18 @@
-use std::io;
+use bevy::prelude::*;
+
+mod camera;
+mod map;
+mod units;
 
 fn main() {
-    println!("Guess the number!");
-
-    println!("Please input your guess.");
-
-    let mut guess = String::new();
-
-    io::stdin()
-        .read_line(&mut guess)
-        .expect("Failed to read line");
-
-    println!("You guessed: {guess}");
+    App::new()
+        .add_plugins(DefaultPlugins.set(WindowPlugin {
+            primary_window: Some(Window {
+                title: "RTS Game".into(),
+                ..default()
+            }),
+            ..default()
+        }))
+        .add_plugins((camera::CameraPlugin, map::MapPlugin, units::UnitsPlugin))
+        .run();
 }
