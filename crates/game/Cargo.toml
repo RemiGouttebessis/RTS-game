@@ -8,7 +8,9 @@ name = "rts-game"
 path = "src/main.rs"
 
 [dependencies]
-bevy = { workspace = true }
+# bevy_dev_tools pulls in the in-game diagnostics overlay (DevDiagnosticsPlugin,
+# debug builds only) — not part of bevy's default features.
+bevy = { workspace = true, features = ["bevy_dev_tools"] }
 game_core = { path = "../game_core" }
 game_sim = { path = "../game_sim" }
 game_render = { path = "../game_render" }

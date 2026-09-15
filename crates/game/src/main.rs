@@ -47,10 +47,10 @@ fn main() {
         .add_plugins(DevDiagnosticsPlugin)
         .add_plugins((
             game_core::CorePlugin,
+            game_input::GameInputPlugin,
             game_sim::SimPlugin,
             game_render::GameRenderPlugin,
             game_ui::GameUiPlugin,
-            game_input::GameInputPlugin,
             game_assets::GameAssetsPlugin,
             game_save::SavePlugin,
         ))

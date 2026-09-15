@@ -2688,6 +2688,7 @@ version = "0.1.0"
 dependencies = [
  "bevy",
  "game_core",
+ "game_input",
 ]
 
 [[package]]

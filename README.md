@@ -17,7 +17,8 @@ crates/
 ├── game_render/        # presentation: camera, map, unit visuals — reads game_core state,
 │                        # never the other way around
 ├── game_ui/              # HUD, selection box, minimap
-├── game_input/             # raw input → game commands for game_sim to consume
+├── game_input/             # raw input (keyboard, mouse) → semantic actions; key
+│                            # bindings live only here, see "Controls" below
 ├── game_assets/             # asset loading, data-driven unit/building definitions (RON)
 ├── game_save/                 # save/load
 └── game_net/                   # optional multiplayer — not a dependency of `game` yet
@@ -29,8 +30,24 @@ data/                             # RON/JSON data: unit stats, tech trees, etc.
 enables running the sim headless (dedicated server, replays, automated balance testing).
 `game_render`/`game_ui` depend on `game_core` to read state, never the reverse.
 
-Everything outside `game_core`'s `Unit` marker and `game_render`'s camera/map/unit-spawning is
-still an empty plugin stub — the crate boundaries exist, the gameplay logic doesn't yet.
+Everything outside `game_core`'s `Unit` marker, `game_render`'s camera/map/unit-spawning, and
+`game_input`'s action translation is still an empty plugin stub — the crate boundaries exist, the
+gameplay logic doesn't yet.
+
+## Controls
+
+| Input | Action |
+|---|---|
+| `W`/`A`/`S`/`D` or arrow keys | Pan camera (north/west/south/east) |
+| Mouse scroll | Zoom in/out |
+| `F3` | Toggle the performance overlay |
+
+`game_input` owns every binding above (`CameraPanAction`, `CameraZoomAction`,
+`ToggleDebugOverlay`). Consumers (`game_render::CameraPlugin`, `game`'s diagnostics overlay) react
+to those actions and never read `ButtonInput`/`MouseWheel` directly — rebinding a key means editing
+one file (`game_input/src/camera.rs` or `game_input/src/debug.rs`), not hunting through gameplay
+code. Input-reading systems run in `game_input::InputSet`; consumers order themselves
+`.after(InputSet)` so they see the current frame's input.
 
 ## Non-default Bevy plugins in use
 
@@ -38,5 +55,12 @@ still an empty plugin stub — the crate boundaries exist, the gameplay logic do
   Compiled in by default (`bevy`'s default features enable `mesh_picking`), but not added to the
   `App` by `DefaultPlugins`. Needed for unit selection later; currently just registered so
   click/hover events fire on unit meshes for a future selection system to consume.
-- `bevy::diagnostic::{FrameTimeDiagnosticsPlugin, LogDiagnosticsPlugin}` (`game`'s
-  `diagnostics.rs`) — FPS/frame-time logging, active in debug builds only.
+- `bevy::dev_tools::diagnostics_overlay::DiagnosticsOverlayPlugin` (needs the `bevy_dev_tools`
+  Cargo feature, enabled on `game`'s `bevy` dependency) — in-game, draggable/collapsible
+  performance panel. Wired up in `game`'s `diagnostics/overlay.rs`, active in debug builds only,
+  showing:
+  - **FPS** and **frame time (ms)** — from `FrameTimeDiagnosticsPlugin`.
+  - **TPS** — sim ticks/sec, a custom diagnostic counting `FixedUpdate` runs against real time.
+    Unlike `Time<Fixed>`'s delta (constant by definition), this drops below the configured rate if
+    the sim can't keep up under load.
+  - **Entity count** — from `EntityCountDiagnosticsPlugin`.
