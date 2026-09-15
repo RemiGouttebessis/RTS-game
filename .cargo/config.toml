@@ -1,0 +1,10 @@
+# Pins the real MSVC ARM64 linker/libs, bypassing two host-specific issues (see CLAUDE.md):
+# - Git Bash's own coreutils `link.exe` shadows MSVC's `link.exe` on PATH.
+# - The newest installed MSVC toolset (14.51) lacks an ARM64->ARM64 linker; 14.44 has it.
+[target.aarch64-pc-windows-msvc]
+linker = "C:/Program Files (x86)/Microsoft Visual Studio/18/BuildTools/VC/Tools/MSVC/14.44.35207/bin/HostARM64/arm64/link.exe"
+rustflags = [
+    "-L", "native=C:/Program Files (x86)/Microsoft Visual Studio/18/BuildTools/VC/Tools/MSVC/14.44.35207/lib/arm64",
+    "-L", "native=C:/Program Files (x86)/Windows Kits/10/Lib/10.0.26100.0/ucrt/arm64",
+    "-L", "native=C:/Program Files (x86)/Windows Kits/10/Lib/10.0.26100.0/um/arm64",
+]
