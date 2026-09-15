@@ -54,6 +54,7 @@ pub const CONTINENTS: Preset = Preset {
     mountain_belt_radius: 0.4,
     river_threshold: 0.02,
     moisture_bias: 0.0,
+    temperature_bias: 0.0,
 };
 
 pub const PANGAEA: Preset = Preset {
@@ -65,6 +66,7 @@ pub const PANGAEA: Preset = Preset {
     mountain_belt_radius: 0.32,
     river_threshold: 0.02,
     moisture_bias: 0.0,
+    temperature_bias: 0.0,
 };
 
 pub const ARCHIPELAGO: Preset = Preset {
@@ -76,6 +78,7 @@ pub const ARCHIPELAGO: Preset = Preset {
     mountain_belt_radius: 0.48,
     river_threshold: 0.03,
     moisture_bias: 0.15,
+    temperature_bias: 0.0,
 };
 
 pub const HIGHLANDS: Preset = Preset {
@@ -87,6 +90,7 @@ pub const HIGHLANDS: Preset = Preset {
     mountain_belt_radius: 0.64,
     river_threshold: 0.015,
     moisture_bias: -0.05,
+    temperature_bias: 0.0,
 };
 
 pub const ALL: &[Preset] = &[CONTINENTS, PANGAEA, ARCHIPELAGO, HIGHLANDS];

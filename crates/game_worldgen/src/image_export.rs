@@ -52,6 +52,31 @@ pub fn biome_map(
     image
 }
 
+/// Draws a small white-disk-with-black-ring marker at each nation position
+/// (see [`crate::nations::place`]), on top of an already-rendered map —
+/// visible against any terrain color underneath it.
+pub fn draw_nations(image: &mut RgbImage, positions: &[(usize, usize)]) {
+    let (width, height) = image.dimensions();
+    for &(x, y) in positions {
+        for dy in -3i32..=3 {
+            for dx in -3i32..=3 {
+                let dist_sq = dx * dx + dy * dy;
+                if dist_sq > 9 {
+                    continue;
+                }
+                let px = (x as i32 + dx).rem_euclid(width as i32) as u32;
+                let py = (y as i32 + dy).clamp(0, height as i32 - 1) as u32;
+                let color = if dist_sq > 4 {
+                    [10, 10, 10]
+                } else {
+                    [255, 255, 255]
+                };
+                image.put_pixel(px, py, Rgb(color));
+            }
+        }
+    }
+}
+
 /// The raw heightmap as grayscale — useful for sanity-checking generation
 /// parameters (continent shapes, mountain belts) independent of biome
 /// classification.

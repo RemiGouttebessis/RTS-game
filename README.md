@@ -59,7 +59,8 @@ Nested states (`#[derive(States)]`/`#[derive(SubStates)]`) drive UI/world flow:
   re-triggers `OnEnter(GameState::InGame)` and re-spawns the world.
 - `MainMenuScreen` (`game_ui::main_menu`, private, sub-state of `GameState::MainMenu`) —
   `Root` (Play/Quit) → `PlayMode` (Solo/Multiplayer) → `SoloMode` (New/Saves) → `WorldGen`
-  (preset/size/seed picks, Generate, image preview). Resets to `Root` every time the menu opens.
+  (settings on the left, live image preview on the right — see "World generation"). Resets to
+  `Root` every time the menu opens.
 - `PauseMenuScreen` (`game_ui::pause_menu`, private, sub-state of `PauseState::Paused`) —
   `Root`/`Keybinds`, which pause-menu screen is showing. Resets to `Root` every time the menu
   opens.
@@ -123,12 +124,31 @@ deliberately not a `bevy` crate — pure computation over a grid, runnable stand
 later headless on a server, independent of the renderer. For now, output is an image, not mesh
 terrain — that conversion is future work once the generation itself is in good shape.
 
-**In-game**: Play → Solo → New opens `game_ui::worldgen_menu` — cycle Preset/Size, Randomize the
-seed, hit Generate, and the result renders into the preview `ImageNode` right there. It stays a
-preview only: nothing wires the generated `World` into `game_render`'s map yet (see above). Preset
-and size choices persist while you navigate Back and return to the screen (a plain `Resource`, not
-reset on `OnEnter`); the seed is a simple wrapping-multiply step per click, not real entropy — it
-just needs to look different each time, not be unpredictable.
+**In-game**: Play → Solo → New opens `game_ui::worldgen_menu` — settings on the left (`-`/`+`
+steppers, no text-input widget needed), a live preview `ImageNode` on the right. Every single
+change (Preset, Map size, Continents, Sea level, Humidity, Temperature, Nations, Seed, or
+Randomize Seed) regenerates and redraws the preview immediately — there's no separate "Generate"
+button. Regeneration is synchronous on the click (fast enough at these map sizes not to need
+threading); all settings persist in a plain `Resource` while you navigate Back and return. It
+stays a preview only: nothing wires the generated `World` into `game_render`'s map yet (see
+above). The seed steppers/Randomize are a simple wrapping-multiply step, not real entropy — they
+just need to look different each time, not be unpredictable.
+
+Exposed knobs, and how each maps onto `Preset`:
+- **Preset** cycles the four named presets below (their "flavor": mountain strength/belt shape,
+  river threshold, octave count — not individually exposed as separate controls).
+- **Continents** (1-16) → `Preset::continent_radius` via `preset::radius_for_count` (see the `2π`
+  note below).
+- **Sea level** (0.30-0.70), **Humidity** (±0.30 → `moisture_bias`), **Temperature** (±0.30 →
+  `temperature_bias`, new field, threaded into `climate::generate` the same way `moisture_bias`
+  already was) — each directly overrides the chosen preset's value; `WorldGenSettings::
+  effective_preset` builds a modified copy of the preset every regeneration, it doesn't mutate the
+  `const` presets.
+- **Nations** (1-32) → not a `Preset` field at all. `game_worldgen::nations::place` scatters that
+  many starting positions across habitable land (rejection-sampled apart from each other,
+  cylinder-wrap-aware distance, land only — no Ocean/Coast/Lake/Snow), drawn onto the preview by
+  `image_export::draw_nations` as white-disk-with-black-ring markers. Placement only, no borders or
+  growth — it exists so "number of nations" visibly does something ahead of any real nation system.
 
 `worldgen_menu::rgb_to_bevy_image` is the bridge from `game_worldgen`'s plain `image::RgbImage`
 output to a real `bevy::image::Image` asset: expand RGB → RGBA (alpha 255), wrap in
@@ -141,9 +161,13 @@ the game's UI, or even build it):
 
 ```
 cargo run -p game_worldgen --example generate -- --preset continents --seed 42 \
-    --width 512 --height 256 --out world.png
+    --width 512 --height 256 --continents 4 --sea-level 0.5 --humidity 0.0 \
+    --temperature 0.0 --nations 8 --out world.png
 cargo run -p game_worldgen --example generate -- --list-presets
 ```
+
+`--continents`/`--sea-level`/`--humidity`/`--temperature`/`--nations` are the same knobs
+`worldgen_menu` exposes, kept in sync here for CLI-based iteration without the game UI.
 
 Writes `world.png` (the colored map) and `world.elevation.png` (raw grayscale heightmap, useful
 for sanity-checking generation parameters independent of biome classification).
@@ -153,10 +177,12 @@ for the same tunable knobs (continent size/count, sea level, mountain strength, 
 moisture bias), not different generation logic. Add a preset by adding a `const`.
 
 **Pipeline** (`lib.rs::generate`, one module per stage): `elevation` (continent shape + mountain
-belts) → `climate` (temperature from latitude + altitude, moisture from noise + water proximity)
-→ `hydrology` (D8 flow accumulation → rivers; local minima → lakes) → `biome` (Civ-style
-`Terrain`/`ElevationBand`/`Feature` classification: Ocean/Coast/Lake/Grassland/Plains/Desert/
-Tundra/Snow, Flat/Hills/Mountains, Forest/Jungle/Marsh).
+belts) → `climate` (temperature from latitude + altitude + `temperature_bias`, moisture from noise
++ water proximity + `moisture_bias`) → `hydrology` (D8 flow accumulation → rivers; local minima →
+lakes) → `biome` (Civ-style `Terrain`/`ElevationBand`/`Feature` classification:
+Ocean/Coast/Lake/Grassland/Plains/Desert/Tundra/Snow, Flat/Hills/Mountains, Forest/Jungle/Marsh).
+`nations::place` is a separate step called after `generate()`, not part of the pipeline itself —
+it only needs the finished `World` (specifically `biome.terrain`, to know what's habitable).
 
 **Seamless cylinder wrap** (`noise.rs`): the map wraps in X (longitude) but not Y (latitude/poles).
 Sampling 2D noise directly along X would show a seam at the wrap; instead, each column's X

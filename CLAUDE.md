@@ -30,9 +30,10 @@ see `crates/game/src/diagnostics/overlay.rs`), then wires in the library crates:
   `main_menu` defines the private `MainMenuScreen` sub-state of `GameState::MainMenu` — `Root`
   (Play/Quit) → `play_mode_menu` (`PlayMode`: Solo/Multiplayer, Multiplayer shown dimmed/WIP, no
   `Button`) → `solo_mode_menu` (`SoloMode`: New/Saves, Saves shown dimmed/WIP) → `worldgen_menu`
-  (`WorldGen`: cycle preset/map size, randomize seed, Generate button calls `game_worldgen::generate`
-  + `image_export::biome_map` and renders the result into an `ImageNode` via
-  `worldgen_menu::rgb_to_bevy_image`). Separately, `pause_menu` (Escape-toggled `PauseState::Paused`;
+  (`WorldGen`: left column of `-`/`+` stepper rows — Preset, Map size, Continents, Sea level,
+  Humidity, Temperature, Nations, Seed/Randomize — right column a live `ImageNode` preview;
+  *every* settings change regenerates immediately via `generate_image`, no separate Generate
+  button). Separately, `pause_menu` (Escape-toggled `PauseState::Paused`;
   defines the private `PauseMenuScreen` sub-state — `Root`/`Keybinds` — and `handle_escape`, context-
   sensitive: cancel a keybind capture, else back out of the keybinds screen, else open/close the pause
   menu), `keybinds_menu` (`PauseMenuScreen::Keybinds` — click a bind, press a new key, saved immediately
@@ -47,15 +48,23 @@ see `crates/game/src/diagnostics/overlay.rs`), then wires in the library crates:
 - `game_net` — optional networking, exists in the workspace but is **not** a dependency of `game` yet
   (add it once an authority model — lockstep vs. server-authoritative — is decided).
 - `game_worldgen` — procedural cylindrical terrain generation (continents, mountains, rivers, lakes,
-  Civ-style terrain/biomes/features). Deliberately **no `bevy` dependency** — pure computation, called
-  from `game_ui::worldgen_menu` (Play → Solo → New) for the in-game preview screen, and also runnable
-  standalone via `cargo run -p game_worldgen --example generate -- --preset continents --seed 42 --out
-  world.png` for faster parameter-tuning iteration without the game UI. Output is an image either way,
-  not mesh terrain yet — that conversion is future work. Hand-rolled 3D Perlin noise (no `noise` crate)
-  so the cylinder's seamless-X-wrap sampling (`noise::cylinder_point`) is under full control; `image` is
-  a real dependency (both here and in `game_ui`, to build/read `RgbImage`). See "World generation" in
-  `README.md` before retuning presets — the radius-to-feature-count relationship is easy to misjudge by
-  an order of magnitude (it already was, once).
+  Civ-style terrain/biomes/features, nation-starting-position placement). Deliberately **no `bevy`
+  dependency** — pure computation, called from `game_ui::worldgen_menu` (Play → Solo → New) for the
+  in-game preview screen, and also runnable standalone via `cargo run -p game_worldgen --example
+  generate -- --preset continents --seed 42 --out world.png` (also takes `--continents`/`--sea-level`/
+  `--humidity`/`--temperature`/`--nations`, kept in sync with the UI's knobs) for faster
+  parameter-tuning iteration without the game UI. Output is an image either way, not mesh terrain yet
+  — that conversion is future work. `Preset` (`preset.rs`) holds the "flavor" knobs (mountain
+  strength/belt, river threshold, octaves); `continent_radius`/`sea_level`/`moisture_bias`/
+  `temperature_bias` get overridden per-generation from user-facing values
+  (`WorldGenSettings::effective_preset` in `worldgen_menu.rs`) rather than being baked into the
+  `const` presets. `nations::place` is a separate post-`generate()` step (rejection-sampled land-only
+  positions, cylinder-wrap-aware spacing), not part of the pipeline — it only reads the finished
+  `World`. Hand-rolled 3D Perlin noise (no `noise` crate) so the cylinder's seamless-X-wrap sampling
+  (`noise::cylinder_point`) is under full control; `image` is a real dependency (both here and in
+  `game_ui`, to build/read `RgbImage`). See "World generation" in `README.md` before retuning presets —
+  the radius-to-feature-count relationship is easy to misjudge by an order of magnitude (it already
+  was, once).
 
 This is still early: most crates are empty scaffolding. Extend the existing plugin/crate structure rather
 than introducing new top-level crates or restructuring further unless the task calls for it.

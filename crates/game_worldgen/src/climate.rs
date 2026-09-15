@@ -36,7 +36,9 @@ pub fn generate(
             // down — a lapse-rate stand-in, not a real atmospheric model.
             let altitude_cooling = (elev - 0.5).max(0.0) * 0.6;
 
-            let temp = (base_temp + temp_variation - altitude_cooling).clamp(0.0, 1.0);
+            let temp = (base_temp + temp_variation - altitude_cooling
+                + preset.temperature_bias as f64)
+                .clamp(0.0, 1.0);
             temperature.set(x as i64, y as i64, temp as f32);
 
             let (mx, my, mz) = cylinder_point(x as f64, y as f64, width as f64, 3.5);

@@ -13,6 +13,7 @@ pub mod elevation;
 pub mod grid;
 pub mod hydrology;
 pub mod image_export;
+pub mod nations;
 pub mod noise;
 pub mod preset;
 

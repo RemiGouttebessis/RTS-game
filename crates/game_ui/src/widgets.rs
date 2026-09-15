@@ -51,3 +51,14 @@ pub(crate) fn button_node() -> Node {
         ..default()
     }
 }
+
+/// A small square button for `-`/`+` steppers and similar compact controls.
+pub(crate) fn stepper_button_node() -> Node {
+    Node {
+        width: Val::Px(32.0),
+        height: Val::Px(32.0),
+        justify_content: JustifyContent::Center,
+        align_items: AlignItems::Center,
+        ..default()
+    }
+}
