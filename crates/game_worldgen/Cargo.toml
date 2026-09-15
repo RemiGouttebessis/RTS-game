@@ -1,0 +1,11 @@
+[package]
+name = "game_worldgen"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+# No `bevy` dependency, deliberately: world generation is pure computation
+# over a grid, independent of rendering or ECS. Keeping it that way is what
+# lets it run as a standalone CLI/example for fast iteration on images,
+# in tests, and (later) headless on a dedicated server.
+image = { version = "0.25", default-features = false, features = ["png"] }

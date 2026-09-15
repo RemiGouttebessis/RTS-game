@@ -4,6 +4,11 @@ pub(crate) const BACKGROUND: Color = Color::srgb(0.1, 0.1, 0.12);
 pub(crate) const NORMAL_BUTTON: Color = Color::srgb(0.2, 0.2, 0.25);
 const HOVERED_BUTTON: Color = Color::srgb(0.3, 0.3, 0.4);
 const PRESSED_BUTTON: Color = Color::srgb(0.15, 0.5, 0.25);
+/// Text color for a not-yet-implemented menu entry (e.g. "Multiplayer
+/// (WIP)") — shown so it's visible on the roadmap, but rendered as plain
+/// text with no `Button`/`Interaction`, so it's honestly non-clickable
+/// rather than a button that silently does nothing.
+pub(crate) const DIMMED_TEXT: Color = Color::srgb(0.5, 0.5, 0.5);
 
 /// Registered once for the whole crate: hover/press color feedback for any
 /// `Button` in any menu screen, so each screen doesn't reimplement it.

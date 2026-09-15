@@ -26,14 +26,18 @@ see `crates/game/src/diagnostics/overlay.rs`), then wires in the library crates:
   (ground/light/unit-cube placeholders, spawn on `OnEnter(GameState::InGame)` **and despawn on
   `OnExit`**, so leaving to the main menu and playing again doesn't duplicate the world; will move to
   reacting to `game_sim`-spawned units once `game_sim` owns spawning).
-- `game_ui` — three menu modules, each spawning/despawning its own UI tree on its state's
-  `OnEnter`/`OnExit`: `main_menu` (`GameState::MainMenu`), `pause_menu` (Escape-toggled
-  `PauseState::Paused`; also defines the private `PauseMenuScreen` sub-state — `Root`/`Keybinds` — and
-  `handle_escape`, which is context-sensitive: cancel a keybind capture, else back out of the keybinds
-  screen, else open/close the pause menu), `keybinds_menu` (`PauseMenuScreen::Keybinds` — click a bind,
-  press a new key, saved immediately via `game_config::save()`). All placeholder styling: default font,
-  flat colors, no art assets. Shared button-hover/press styling lives in `widgets.rs`. HUD/selection
-  box/minimap land here too, eventually.
+- `game_ui` — menu modules, each spawning/despawning its own UI tree on its state's `OnEnter`/`OnExit`:
+  `main_menu` defines the private `MainMenuScreen` sub-state of `GameState::MainMenu` — `Root`
+  (Play/Quit) → `play_mode_menu` (`PlayMode`: Solo/Multiplayer, Multiplayer shown dimmed/WIP, no
+  `Button`) → `solo_mode_menu` (`SoloMode`: New/Saves, Saves shown dimmed/WIP) → `worldgen_menu`
+  (`WorldGen`: cycle preset/map size, randomize seed, Generate button calls `game_worldgen::generate`
+  + `image_export::biome_map` and renders the result into an `ImageNode` via
+  `worldgen_menu::rgb_to_bevy_image`). Separately, `pause_menu` (Escape-toggled `PauseState::Paused`;
+  defines the private `PauseMenuScreen` sub-state — `Root`/`Keybinds` — and `handle_escape`, context-
+  sensitive: cancel a keybind capture, else back out of the keybinds screen, else open/close the pause
+  menu), `keybinds_menu` (`PauseMenuScreen::Keybinds` — click a bind, press a new key, saved immediately
+  via `game_config::save()`). All placeholder styling: default font, flat colors, no art assets. Shared
+  button-hover/press styling lives in `widgets.rs`. HUD/selection box/minimap land here too, eventually.
 - `game_input` — translates raw keyboard/mouse into semantic actions (`CameraPanAction`,
   `CameraZoomAction`, `ToggleDebugOverlay`, `TogglePauseMenu`), reading primary keys from
   `game_config::KeyBindings` where applicable (arrow keys and Escape are fixed, not user-configurable),
@@ -42,6 +46,16 @@ see `crates/game/src/diagnostics/overlay.rs`), then wires in the library crates:
 - `game_assets`, `game_save` — empty plugin stubs, wired into `game` but with no systems yet.
 - `game_net` — optional networking, exists in the workspace but is **not** a dependency of `game` yet
   (add it once an authority model — lockstep vs. server-authoritative — is decided).
+- `game_worldgen` — procedural cylindrical terrain generation (continents, mountains, rivers, lakes,
+  Civ-style terrain/biomes/features). Deliberately **no `bevy` dependency** — pure computation, called
+  from `game_ui::worldgen_menu` (Play → Solo → New) for the in-game preview screen, and also runnable
+  standalone via `cargo run -p game_worldgen --example generate -- --preset continents --seed 42 --out
+  world.png` for faster parameter-tuning iteration without the game UI. Output is an image either way,
+  not mesh terrain yet — that conversion is future work. Hand-rolled 3D Perlin noise (no `noise` crate)
+  so the cylinder's seamless-X-wrap sampling (`noise::cylinder_point`) is under full control; `image` is
+  a real dependency (both here and in `game_ui`, to build/read `RgbImage`). See "World generation" in
+  `README.md` before retuning presets — the radius-to-feature-count relationship is easy to misjudge by
+  an order of magnitude (it already was, once).
 
 This is still early: most crates are empty scaffolding. Extend the existing plugin/crate structure rather
 than introducing new top-level crates or restructuring further unless the task calls for it.

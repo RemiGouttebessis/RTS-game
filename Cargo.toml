@@ -11,6 +11,7 @@ members = [
     "crates/game_assets",
     "crates/game_save",
     "crates/game_net",
+    "crates/game_worldgen",
 ]
 
 [workspace.package]

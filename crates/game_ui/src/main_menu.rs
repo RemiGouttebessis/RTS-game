@@ -3,6 +3,19 @@ use game_core::GameState;
 
 use crate::widgets::{BACKGROUND, NORMAL_BUTTON, button_node, fullscreen_menu_node};
 
+/// Which main-menu screen is showing. Resets to `Root` every time the menu
+/// (re)opens (i.e. every time `GameState` becomes `MainMenu`) — same pattern
+/// as `pause_menu::PauseMenuScreen`.
+#[derive(SubStates, Debug, Clone, Copy, Default, Eq, PartialEq, Hash)]
+#[source(GameState = GameState::MainMenu)]
+pub(crate) enum MainMenuScreen {
+    #[default]
+    Root,
+    PlayMode,
+    SoloMode,
+    WorldGen,
+}
+
 /// Root of the main menu UI tree; despawned (with all children) on exit.
 #[derive(Component)]
 struct MainMenuRoot;
@@ -14,9 +27,13 @@ enum MenuButton {
 }
 
 pub(crate) fn plugin(app: &mut App) {
-    app.add_systems(OnEnter(GameState::MainMenu), spawn_menu)
-        .add_systems(OnExit(GameState::MainMenu), despawn_menu)
-        .add_systems(Update, button_actions.run_if(in_state(GameState::MainMenu)));
+    app.add_sub_state::<MainMenuScreen>()
+        .add_systems(OnEnter(MainMenuScreen::Root), spawn_menu)
+        .add_systems(OnExit(MainMenuScreen::Root), despawn_menu)
+        .add_systems(
+            Update,
+            button_actions.run_if(in_state(MainMenuScreen::Root)),
+        );
 }
 
 fn spawn_menu(mut commands: Commands) {
@@ -44,7 +61,7 @@ fn spawn_menu(mut commands: Commands) {
 
 fn button_actions(
     buttons: Query<(&Interaction, &MenuButton), Changed<Interaction>>,
-    mut next_state: ResMut<NextState<GameState>>,
+    mut next_screen: ResMut<NextState<MainMenuScreen>>,
     mut exit: MessageWriter<AppExit>,
 ) {
     for (interaction, action) in &buttons {
@@ -52,7 +69,7 @@ fn button_actions(
             continue;
         }
         match action {
-            MenuButton::Play => next_state.set(GameState::InGame),
+            MenuButton::Play => next_screen.set(MainMenuScreen::PlayMode),
             MenuButton::Quit => {
                 exit.write(AppExit::Success);
             }

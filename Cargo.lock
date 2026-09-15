@@ -2765,6 +2765,15 @@ dependencies = [
  "game_config",
  "game_core",
  "game_input",
+ "game_worldgen",
+ "image",
+]
+
+[[package]]
+name = "game_worldgen"
+version = "0.1.0"
+dependencies = [
+ "image",
 ]
 
 [[package]]

@@ -19,17 +19,22 @@ crates/
 │                           # pathfinding, orders — ordered via the SimSet system set
 ├── game_render/             # presentation: camera, map, unit visuals — reads game_core
 │                             # state, never the other way around; gated to GameState::InGame
-├── game_ui/                   # main menu, ESC/pause menu, keybind-rebind screen today; HUD,
+├── game_ui/                   # main menu (Play → Solo/Multiplayer → New/Saves → world generator
+│                               # preview), ESC/pause menu, keybind-rebind screen today; HUD,
 │                               # selection box, minimap land here too, eventually
 ├── game_input/                  # raw input (keyboard, mouse) → semantic actions; key
 │                                 # bindings live only here, see "Controls" below
 ├── game_assets/                   # asset loading, data-driven unit/building definitions (RON)
 ├── game_save/                       # save/load
-└── game_net/                          # optional multiplayer — not a dependency of `game` yet
-assets/                                 # game assets (models, textures, audio, ...) — currently
-                                         # placeholders (colored meshes, default font), real
-                                         # assets TBD
-data/                                    # RON/JSON data: unit stats, tech trees, etc.
+├── game_net/                          # optional multiplayer — not a dependency of `game` yet
+└── game_worldgen/                       # procedural cylindrical terrain generation — see
+                                          # "World generation" below. No bevy dependency itself,
+                                          # but game_ui depends on it to drive the in-game preview
+                                          # screen; still standalone-runnable too (see below)
+assets/                                    # game assets (models, textures, audio, ...) — currently
+                                            # placeholders (colored meshes, default font), real
+                                            # assets TBD
+data/                                       # RON/JSON data: unit stats, tech trees, etc.
 ```
 
 `game_core` and `game_sim` have no rendering dependencies — that boundary is what eventually
@@ -42,7 +47,7 @@ empty plugin stub — the crate boundaries exist, the gameplay logic doesn't yet
 
 ## Game state
 
-Three nested states (`#[derive(States)]`/`#[derive(SubStates)]`) drive UI/world flow:
+Nested states (`#[derive(States)]`/`#[derive(SubStates)]`) drive UI/world flow:
 
 - `GameState` (`game_core`) — `MainMenu` (default) → `InGame`. `game_render`'s map/unit spawning
   runs on `OnEnter`/`OnExit(GameState::InGame)` instead of `Startup` (spawns once on entry,
@@ -52,15 +57,23 @@ Three nested states (`#[derive(States)]`/`#[derive(SubStates)]`) drive UI/world 
 - `PauseState` (`game_core`, sub-state of `GameState::InGame`) — `Running`/`Paused`, toggled by
   Escape. A sub-state (not a third `GameState` variant) specifically so pausing/resuming never
   re-triggers `OnEnter(GameState::InGame)` and re-spawns the world.
+- `MainMenuScreen` (`game_ui::main_menu`, private, sub-state of `GameState::MainMenu`) —
+  `Root` (Play/Quit) → `PlayMode` (Solo/Multiplayer) → `SoloMode` (New/Saves) → `WorldGen`
+  (preset/size/seed picks, Generate, image preview). Resets to `Root` every time the menu opens.
 - `PauseMenuScreen` (`game_ui::pause_menu`, private, sub-state of `PauseState::Paused`) —
   `Root`/`Keybinds`, which pause-menu screen is showing. Resets to `Root` every time the menu
   opens.
 
-`game_ui::main_menu`, `pause_menu`, and `keybinds_menu` each spawn/despawn their own UI tree on
-their state's `OnEnter`/`OnExit` — no leftover entities across transitions.
+Every `game_ui` screen module (`main_menu`, `play_mode_menu`, `solo_mode_menu`, `worldgen_menu`,
+`pause_menu`, `keybinds_menu`) spawns/despawns its own UI tree on its state's `OnEnter`/`OnExit` —
+no leftover entities across transitions.
 
 Escape is context-sensitive (`pause_menu::handle_escape`): cancel an in-progress keybind capture,
 else back out of the keybinds screen to the pause root, else open/close the pause menu.
+
+**Multiplayer and Saves are shown but not clickable** ("(WIP)", dimmed text with no `Button`
+component) — `game_net` and `game_save` are still empty stubs, so making them look clickable would
+be dishonest rather than just unfinished.
 
 ## Controls
 
@@ -101,6 +114,68 @@ are then handed to `game_config::GameConfigPlugin`, which inserts `GraphicsSetti
 calls `game_config::save()` immediately after every successful rebind — the only place that calls
 it today. Graphics/camera settings have no in-game editor yet, so they only change by hand-editing
 `settings.ron`.
+
+## World generation
+
+`game_worldgen` generates the cylindrical world procedurally (design doc § World & Geography):
+continents/oceans, mountain ranges, rivers, lakes, and Civ-style terrain/biomes/features. It's
+deliberately not a `bevy` crate — pure computation over a grid, runnable standalone, in tests, and
+later headless on a server, independent of the renderer. For now, output is an image, not mesh
+terrain — that conversion is future work once the generation itself is in good shape.
+
+**In-game**: Play → Solo → New opens `game_ui::worldgen_menu` — cycle Preset/Size, Randomize the
+seed, hit Generate, and the result renders into the preview `ImageNode` right there. It stays a
+preview only: nothing wires the generated `World` into `game_render`'s map yet (see above). Preset
+and size choices persist while you navigate Back and return to the screen (a plain `Resource`, not
+reset on `OnEnter`); the seed is a simple wrapping-multiply step per click, not real entropy — it
+just needs to look different each time, not be unpredictable.
+
+`worldgen_menu::rgb_to_bevy_image` is the bridge from `game_worldgen`'s plain `image::RgbImage`
+output to a real `bevy::image::Image` asset: expand RGB → RGBA (alpha 255), wrap in
+`Image::new(Extent3d, TextureDimension::D2, _, TextureFormat::Rgba8UnormSrgb, _)`, `Assets<Image>::add`
+it, point an `ImageNode` at the resulting handle. `game_ui` is the one crate that bridges plain
+worldgen output into Bevy-flavored data — `game_worldgen` itself still knows nothing about Bevy.
+
+**Standalone CLI** (faster iteration when tuning generation parameters — no need to click through
+the game's UI, or even build it):
+
+```
+cargo run -p game_worldgen --example generate -- --preset continents --seed 42 \
+    --width 512 --height 256 --out world.png
+cargo run -p game_worldgen --example generate -- --list-presets
+```
+
+Writes `world.png` (the colored map) and `world.elevation.png` (raw grayscale heightmap, useful
+for sanity-checking generation parameters independent of biome classification).
+
+**Presets** (`preset.rs`): `continents`, `pangaea`, `archipelago`, `highlands` — different values
+for the same tunable knobs (continent size/count, sea level, mountain strength, river threshold,
+moisture bias), not different generation logic. Add a preset by adding a `const`.
+
+**Pipeline** (`lib.rs::generate`, one module per stage): `elevation` (continent shape + mountain
+belts) → `climate` (temperature from latitude + altitude, moisture from noise + water proximity)
+→ `hydrology` (D8 flow accumulation → rivers; local minima → lakes) → `biome` (Civ-style
+`Terrain`/`ElevationBand`/`Feature` classification: Ocean/Coast/Lake/Grassland/Plains/Desert/
+Tundra/Snow, Flat/Hills/Mountains, Forest/Jungle/Marsh).
+
+**Seamless cylinder wrap** (`noise.rs`): the map wraps in X (longitude) but not Y (latitude/poles).
+Sampling 2D noise directly along X would show a seam at the wrap; instead, each column's X
+coordinate maps to an angle and is sampled on a circle embedded in a hand-rolled 3D Perlin noise
+field (`cylinder_point`) — walking all the way around returns exactly to the start, so it's
+seamless by construction. No `noise`-crate dependency; this needed custom cylindrical sampling
+control anyway, and hand-rolling avoided guessing at an unfamiliar crate's exact API. `image` is a
+dependency (PNG output) — that one's a real "don't reinvent this" case, unlike noise generation.
+
+Simplification worth knowing about: lakes are a heuristic (local elevation minima + a small ring
+around them), not exactly-computed drainage basins (real depression-filling hydrology). Good
+enough for a preview map; revisit if lake placement/shape ever needs to be precise.
+
+If retuning presets: a single Perlin octave has a wavelength of ~1 noise-space unit, and
+`cylinder_point`'s circle has circumference `2π * radius`, so `continent_radius`/
+`mountain_belt_radius` produce roughly `2π * radius` features around the loop — easy to misjudge by
+an order of magnitude if you forget the `2π` (this is exactly what happened tuning the presets
+below; the first pass used radius values 5-10x too large and produced a speckled mess instead of a
+few continents — see `preset.rs`'s doc comment on `continent_radius`).
 
 ## Non-default Bevy plugins in use
 

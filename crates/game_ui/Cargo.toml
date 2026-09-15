@@ -8,3 +8,7 @@ bevy = { workspace = true }
 game_config = { path = "../game_config" }
 game_core = { path = "../game_core" }
 game_input = { path = "../game_input" }
+game_worldgen = { path = "../game_worldgen" }
+# Matches game_worldgen's own dependency spec — needed here to read the
+# RgbImage it returns (pixel iteration) when converting it into a bevy Image.
+image = { version = "0.25", default-features = false, features = ["png"] }
