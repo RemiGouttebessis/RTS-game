@@ -6,25 +6,40 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `rts-game` is a Rust Cargo workspace (edition 2024) using Bevy 0.19.1, following the crate layout in
 `rts-bevy-architecture-notes.md`. The `game` crate (`crates/game`, binary name `rts-game`) is a thin
-binary: it builds `DefaultPlugins`, adds `MeshPickingPlugin` (compiled in by Bevy's default features but
-not added by `DefaultPlugins`) and a debug-only `DevDiagnosticsPlugin` (in-game perf overlay: FPS, frame
-time, sim tick rate, entity count — see `crates/game/src/diagnostics/overlay.rs`), then wires in the
-library crates:
+binary: it loads persisted settings via `game_config::load()` *before* the `App` is built (the graphics
+backend has to be known for `RenderPlugin`), builds `DefaultPlugins`, adds `MeshPickingPlugin` (compiled
+in by Bevy's default features but not added by `DefaultPlugins`) and a debug-only `DevDiagnosticsPlugin`
+(in-game perf overlay, hidden by default, `F3` to toggle: FPS, frame time, sim tick rate, entity count —
+see `crates/game/src/diagnostics/overlay.rs`), then wires in the library crates:
 
-- `game_core` — sim ECS data (components/resources/events), zero rendering deps. Currently just the `Unit`
-  marker component.
+- `game_config` — persisted user settings (graphics backend, camera speeds, keybinds), serialized as RON
+  to the OS config directory via the `directories` crate. See "Configuration" in `README.md`.
+- `game_core` — sim ECS data (components/resources/events) plus state types: `GameState` (`MainMenu`
+  default → `InGame`) and `PauseState` (`Running`/`Paused`, a `SubStates` of `GameState::InGame` — kept
+  separate from `GameState` specifically so pause/resume doesn't re-trigger `OnEnter(GameState::InGame)`
+  world-spawning). Zero rendering deps. Gameplay-wise currently just the `Unit` marker component.
 - `game_sim` — deterministic simulation on `FixedUpdate`: `MovementPlugin`, `CombatPlugin`,
   `PathfindingPlugin`, `OrdersPlugin`, ordered via the `SimSet` system set. All currently empty stubs — no
   sim logic has been implemented yet.
-- `game_render` — presentation: `CameraPlugin` (pan/zoom 3D camera, driven by `game_input` actions),
-  `MapPlugin` (ground plane + light), `UnitsPlugin` (currently spawns unit visuals directly as a
-  placeholder; will move to reacting to `game_sim`-spawned units once `game_sim` owns spawning).
+- `game_render` — presentation: `CameraPlugin` (pan/zoom 3D camera, driven by `game_input` actions,
+  spawns at `Startup` but pan/zoom only run `in_state(GameState::InGame)`), `MapPlugin`/`UnitsPlugin`
+  (ground/light/unit-cube placeholders, spawn on `OnEnter(GameState::InGame)` **and despawn on
+  `OnExit`**, so leaving to the main menu and playing again doesn't duplicate the world; will move to
+  reacting to `game_sim`-spawned units once `game_sim` owns spawning).
+- `game_ui` — three menu modules, each spawning/despawning its own UI tree on its state's
+  `OnEnter`/`OnExit`: `main_menu` (`GameState::MainMenu`), `pause_menu` (Escape-toggled
+  `PauseState::Paused`; also defines the private `PauseMenuScreen` sub-state — `Root`/`Keybinds` — and
+  `handle_escape`, which is context-sensitive: cancel a keybind capture, else back out of the keybinds
+  screen, else open/close the pause menu), `keybinds_menu` (`PauseMenuScreen::Keybinds` — click a bind,
+  press a new key, saved immediately via `game_config::save()`). All placeholder styling: default font,
+  flat colors, no art assets. Shared button-hover/press styling lives in `widgets.rs`. HUD/selection
+  box/minimap land here too, eventually.
 - `game_input` — translates raw keyboard/mouse into semantic actions (`CameraPanAction`,
-  `CameraZoomAction`, `ToggleDebugOverlay`), ordered via the `InputSet` system set. Key/mouse
-  bindings live only here; consumers react to actions, never read `ButtonInput`/`MouseWheel`
-  directly. See "Controls" in `README.md`.
-- `game_ui`, `game_assets`, `game_save` — empty plugin stubs, wired into `game` but with no systems
-  yet.
+  `CameraZoomAction`, `ToggleDebugOverlay`, `TogglePauseMenu`), reading primary keys from
+  `game_config::KeyBindings` where applicable (arrow keys and Escape are fixed, not user-configurable),
+  ordered via the `InputSet` system set. Key/mouse bindings live only here; consumers react to actions,
+  never read `ButtonInput`/`MouseWheel` directly. See "Controls" in `README.md`.
+- `game_assets`, `game_save` — empty plugin stubs, wired into `game` but with no systems yet.
 - `game_net` — optional networking, exists in the workspace but is **not** a dependency of `game` yet
   (add it once an authority model — lockstep vs. server-authoritative — is decided).
 

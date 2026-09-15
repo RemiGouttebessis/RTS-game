@@ -2,9 +2,11 @@ use bevy::prelude::*;
 
 mod camera;
 mod debug;
+mod pause;
 
 pub use camera::{CameraPanAction, CameraZoomAction};
 pub use debug::ToggleDebugOverlay;
+pub use pause::TogglePauseMenu;
 
 /// Ordering label for input-reading systems. Consumers add their systems
 /// `.after(InputSet)` so they see this frame's input rather than last frame's.
@@ -19,7 +21,10 @@ pub struct GameInputPlugin;
 
 impl Plugin for GameInputPlugin {
     fn build(&self, app: &mut App) {
-        app.configure_sets(Update, InputSet)
-            .add_plugins((camera::plugin, debug::plugin));
+        app.configure_sets(Update, InputSet).add_plugins((
+            camera::plugin,
+            debug::plugin,
+            pause::plugin,
+        ));
     }
 }

@@ -1,13 +1,18 @@
 use bevy::prelude::*;
 use game_config::CameraSettings;
+use game_core::GameState;
 use game_input::{CameraPanAction, CameraZoomAction, InputSet};
 
 pub struct CameraPlugin;
 
 impl Plugin for CameraPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, spawn_camera)
-            .add_systems(Update, (pan_camera, zoom_camera).after(InputSet));
+        app.add_systems(Startup, spawn_camera).add_systems(
+            Update,
+            (pan_camera, zoom_camera)
+                .after(InputSet)
+                .run_if(in_state(GameState::InGame)),
+        );
     }
 }
 

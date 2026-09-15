@@ -2762,6 +2762,9 @@ name = "game_ui"
 version = "0.1.0"
 dependencies = [
  "bevy",
+ "game_config",
+ "game_core",
+ "game_input",
 ]
 
 [[package]]

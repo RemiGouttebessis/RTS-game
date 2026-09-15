@@ -1,5 +1,5 @@
 use bevy::prelude::*;
-use game_core::Unit;
+use game_core::{GameState, Unit};
 
 const UNIT_COUNT: i32 = 5;
 const UNIT_SPACING: f32 = 2.0;
@@ -11,7 +11,8 @@ pub struct UnitsPlugin;
 
 impl Plugin for UnitsPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, spawn_units);
+        app.add_systems(OnEnter(GameState::InGame), spawn_units)
+            .add_systems(OnExit(GameState::InGame), despawn_units);
     }
 }
 
@@ -31,5 +32,13 @@ fn spawn_units(
             MeshMaterial3d(material.clone()),
             Transform::from_xyz(x, 0.5, 0.0),
         ));
+    }
+}
+
+// Reuses the `Unit` marker itself to find what to despawn — every unit this
+// plugin spawns already carries it, no separate tag needed.
+fn despawn_units(mut commands: Commands, units: Query<Entity, With<Unit>>) {
+    for entity in &units {
+        commands.entity(entity).despawn();
     }
 }

@@ -1,7 +1,9 @@
 use bevy::prelude::*;
 
+mod state;
 mod units;
 
+pub use state::{GameState, PauseState};
 pub use units::Unit;
 
 /// Sim-side ECS data: components, resources, events. Zero rendering dependencies —
@@ -10,5 +12,7 @@ pub use units::Unit;
 pub struct CorePlugin;
 
 impl Plugin for CorePlugin {
-    fn build(&self, _app: &mut App) {}
+    fn build(&self, app: &mut App) {
+        app.init_state::<GameState>().add_sub_state::<PauseState>();
+    }
 }

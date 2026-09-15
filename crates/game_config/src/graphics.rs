@@ -6,16 +6,11 @@ use serde::{Deserialize, Serialize};
 /// `Backends` bitflags (not `Serialize`), covering the two backends this
 /// project cares about — see CLAUDE.md's environment notes for why (Vulkan
 /// flickers on this dev machine's GPU; DX12 doesn't).
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum Backend {
+    #[default]
     Dx12,
     Vulkan,
-}
-
-impl Default for Backend {
-    fn default() -> Self {
-        Backend::Dx12
-    }
 }
 
 impl From<Backend> for Backends {
