@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/game",
+    "crates/game_config",
     "crates/game_core",
     "crates/game_sim",
     "crates/game_render",

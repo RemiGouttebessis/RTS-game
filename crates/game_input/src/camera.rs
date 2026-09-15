@@ -1,5 +1,6 @@
 use bevy::input::mouse::MouseWheel;
 use bevy::prelude::*;
+use game_config::KeyBindings;
 
 use crate::InputSet;
 
@@ -20,18 +21,22 @@ pub(crate) fn plugin(app: &mut App) {
         .add_systems(Update, (read_pan, read_zoom).in_set(InputSet));
 }
 
-fn read_pan(keys: Res<ButtonInput<KeyCode>>, mut pan: ResMut<CameraPanAction>) {
+fn read_pan(
+    keys: Res<ButtonInput<KeyCode>>,
+    binds: Res<KeyBindings>,
+    mut pan: ResMut<CameraPanAction>,
+) {
     let mut direction = Vec2::ZERO;
-    if keys.pressed(KeyCode::KeyW) || keys.pressed(KeyCode::ArrowUp) {
+    if keys.pressed(binds.pan_north) || keys.pressed(KeyCode::ArrowUp) {
         direction.y -= 1.0; // north
     }
-    if keys.pressed(KeyCode::KeyS) || keys.pressed(KeyCode::ArrowDown) {
+    if keys.pressed(binds.pan_south) || keys.pressed(KeyCode::ArrowDown) {
         direction.y += 1.0; // south
     }
-    if keys.pressed(KeyCode::KeyA) || keys.pressed(KeyCode::ArrowLeft) {
+    if keys.pressed(binds.pan_west) || keys.pressed(KeyCode::ArrowLeft) {
         direction.x -= 1.0; // west
     }
-    if keys.pressed(KeyCode::KeyD) || keys.pressed(KeyCode::ArrowRight) {
+    if keys.pressed(binds.pan_east) || keys.pressed(KeyCode::ArrowRight) {
         direction.x += 1.0; // east
     }
     pan.0 = direction.normalize_or_zero();

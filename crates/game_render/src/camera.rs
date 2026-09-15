@@ -1,10 +1,6 @@
 use bevy::prelude::*;
+use game_config::CameraSettings;
 use game_input::{CameraPanAction, CameraZoomAction, InputSet};
-
-const PAN_SPEED: f32 = 20.0;
-const ZOOM_SPEED: f32 = 10.0;
-const MIN_HEIGHT: f32 = 5.0;
-const MAX_HEIGHT: f32 = 60.0;
 
 pub struct CameraPlugin;
 
@@ -24,6 +20,7 @@ fn spawn_camera(mut commands: Commands) {
 
 fn pan_camera(
     pan: Res<CameraPanAction>,
+    settings: Res<CameraSettings>,
     time: Res<Time>,
     mut cameras: Query<&mut Transform, With<Camera3d>>,
 ) {
@@ -35,11 +32,12 @@ fn pan_camera(
         return;
     };
     let direction = Vec3::new(pan.0.x, 0.0, pan.0.y);
-    transform.translation += direction * PAN_SPEED * time.delta_secs();
+    transform.translation += direction * settings.pan_speed * time.delta_secs();
 }
 
 fn zoom_camera(
     mut zoom_events: MessageReader<CameraZoomAction>,
+    settings: Res<CameraSettings>,
     mut cameras: Query<&mut Transform, With<Camera3d>>,
 ) {
     let zoom: f32 = zoom_events.read().map(|event| event.0).sum();
@@ -50,6 +48,6 @@ fn zoom_camera(
     let Ok(mut transform) = cameras.single_mut() else {
         return;
     };
-    transform.translation.y =
-        (transform.translation.y - zoom * ZOOM_SPEED).clamp(MIN_HEIGHT, MAX_HEIGHT);
+    transform.translation.y = (transform.translation.y - zoom * settings.zoom_speed)
+        .clamp(settings.min_height, settings.max_height);
 }

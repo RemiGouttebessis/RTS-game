@@ -23,7 +23,10 @@ pub fn install(app: &mut App) {
     .init_resource::<SimTickCount>()
     .add_systems(FixedUpdate, count_sim_tick)
     .add_systems(Update, (update_tps, toggle_overlay.after(InputSet)))
-    .add_systems(Startup, spawn_overlay);
+    .add_systems(Startup, spawn_overlay)
+    // Runs after Startup's commands (and the overlay-spawning observer they
+    // trigger) are fully applied, so the Node it hides already exists.
+    .add_systems(PostStartup, hide_overlay_by_default);
 }
 
 #[derive(Resource, Default)]
@@ -63,6 +66,12 @@ fn toggle_overlay(
         } else {
             Display::None
         };
+    }
+}
+
+fn hide_overlay_by_default(mut overlays: Query<&mut Node, With<DiagnosticsOverlay>>) {
+    for mut node in &mut overlays {
+        node.display = Display::None;
     }
 }
 

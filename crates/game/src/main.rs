@@ -2,28 +2,34 @@ use bevy::picking::mesh_picking::MeshPickingPlugin;
 use bevy::prelude::*;
 use bevy::render::RenderPlugin;
 use bevy::render::settings::{Backends, RenderCreation, WgpuSettings};
+use game_config::Backend;
 
 mod diagnostics;
 
 use diagnostics::DevDiagnosticsPlugin;
 
-fn backend_from_args() -> Backends {
+/// `--backend=dx12`/`--backend=vulkan` overrides the persisted setting for
+/// this run only (not saved) — handy for quickly A/B-testing a backend
+/// without touching the settings file.
+fn backend_override_from_args() -> Option<Backend> {
     let arg = std::env::args().find(|a| a.starts_with("--backend="));
     match arg.as_deref().map(|a| &a["--backend=".len()..]) {
-        Some("vulkan") => Backends::VULKAN,
-        Some("dx12") => Backends::DX12,
+        Some("vulkan") => Some(Backend::Vulkan),
+        Some("dx12") => Some(Backend::Dx12),
         Some(other) => {
-            eprintln!(
-                "Unknown --backend value '{other}', defaulting to dx12 (use 'dx12' or 'vulkan')"
-            );
-            Backends::DX12
+            eprintln!("Unknown --backend value '{other}', ignoring (use 'dx12' or 'vulkan')");
+            None
         }
-        None => Backends::DX12,
+        None => None,
     }
 }
 
 fn main() {
-    let backends = backend_from_args();
+    let mut settings = game_config::load();
+    if let Some(backend) = backend_override_from_args() {
+        settings.graphics.backend = backend;
+    }
+    let backends: Backends = settings.graphics.backend.into();
 
     App::new()
         .add_plugins(
@@ -45,6 +51,7 @@ fn main() {
         )
         .add_plugins(MeshPickingPlugin)
         .add_plugins(DevDiagnosticsPlugin)
+        .add_plugins(game_config::GameConfigPlugin { settings })
         .add_plugins((
             game_core::CorePlugin,
             game_input::GameInputPlugin,

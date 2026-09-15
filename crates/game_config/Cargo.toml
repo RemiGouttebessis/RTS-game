@@ -1,0 +1,11 @@
+[package]
+name = "game_config"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+# "serialize" makes bevy's own types (KeyCode, ...) implement serde traits.
+bevy = { workspace = true, features = ["serialize"] }
+serde = { version = "1", features = ["derive"] }
+ron = "0.12"
+directories = "6"

@@ -11,6 +11,7 @@ path = "src/main.rs"
 # bevy_dev_tools pulls in the in-game diagnostics overlay (DevDiagnosticsPlugin,
 # debug builds only) — not part of bevy's default features.
 bevy = { workspace = true, features = ["bevy_dev_tools"] }
+game_config = { path = "../game_config" }
 game_core = { path = "../game_core" }
 game_sim = { path = "../game_sim" }
 game_render = { path = "../game_render" }
