@@ -2641,6 +2641,78 @@ dependencies = [
 ]
 
 [[package]]
+name = "game"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+ "game_assets",
+ "game_core",
+ "game_input",
+ "game_render",
+ "game_save",
+ "game_sim",
+ "game_ui",
+]
+
+[[package]]
+name = "game_assets"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+]
+
+[[package]]
+name = "game_core"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+]
+
+[[package]]
+name = "game_input"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+]
+
+[[package]]
+name = "game_net"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+]
+
+[[package]]
+name = "game_render"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+ "game_core",
+]
+
+[[package]]
+name = "game_save"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+]
+
+[[package]]
+name = "game_sim"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+ "game_core",
+]
+
+[[package]]
+name = "game_ui"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+]
+
+[[package]]
 name = "gethostname"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4473,13 +4545,6 @@ dependencies = [
  "serde_derive",
  "typeid",
  "unicode-ident",
-]
-
-[[package]]
-name = "rts-game"
-version = "0.1.0"
-dependencies = [
- "bevy",
 ]
 
 [[package]]

@@ -1,0 +1,8 @@
+[package]
+name = "game_sim"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+bevy = { workspace = true }
+game_core = { path = "../game_core" }

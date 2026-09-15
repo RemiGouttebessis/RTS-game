@@ -63,5 +63,6 @@ fn zoom_camera(
     let Ok(mut transform) = cameras.single_mut() else {
         return;
     };
-    transform.translation.y = (transform.translation.y - scroll * ZOOM_SPEED).clamp(MIN_HEIGHT, MAX_HEIGHT);
+    transform.translation.y =
+        (transform.translation.y - scroll * ZOOM_SPEED).clamp(MIN_HEIGHT, MAX_HEIGHT);
 }

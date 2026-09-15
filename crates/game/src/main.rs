@@ -1,10 +1,11 @@
+use bevy::picking::mesh_picking::MeshPickingPlugin;
 use bevy::prelude::*;
 use bevy::render::RenderPlugin;
 use bevy::render::settings::{Backends, RenderCreation, WgpuSettings};
 
-mod camera;
-mod map;
-mod units;
+mod diagnostics;
+
+use diagnostics::DevDiagnosticsPlugin;
 
 fn backend_from_args() -> Backends {
     let arg = std::env::args().find(|a| a.starts_with("--backend="));
@@ -42,6 +43,16 @@ fn main() {
                     ..default()
                 }),
         )
-        .add_plugins((camera::CameraPlugin, map::MapPlugin, units::UnitsPlugin))
+        .add_plugins(MeshPickingPlugin)
+        .add_plugins(DevDiagnosticsPlugin)
+        .add_plugins((
+            game_core::CorePlugin,
+            game_sim::SimPlugin,
+            game_render::GameRenderPlugin,
+            game_ui::GameUiPlugin,
+            game_input::GameInputPlugin,
+            game_assets::GameAssetsPlugin,
+            game_save::SavePlugin,
+        ))
         .run();
 }

@@ -1,11 +1,12 @@
 use bevy::prelude::*;
+use game_core::Unit;
 
 const UNIT_COUNT: i32 = 5;
 const UNIT_SPACING: f32 = 2.0;
 
-#[derive(Component)]
-pub struct Unit;
-
+/// Spawns unit visuals directly, as a placeholder. Once `game_sim` owns unit
+/// spawning, this becomes a system that reacts to newly spawned sim units
+/// (`Added<Unit>`) instead of creating the entities itself.
 pub struct UnitsPlugin;
 
 impl Plugin for UnitsPlugin {

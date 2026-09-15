@@ -1,0 +1,18 @@
+[package]
+name = "game"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "rts-game"
+path = "src/main.rs"
+
+[dependencies]
+bevy = { workspace = true }
+game_core = { path = "../game_core" }
+game_sim = { path = "../game_sim" }
+game_render = { path = "../game_render" }
+game_ui = { path = "../game_ui" }
+game_input = { path = "../game_input" }
+game_assets = { path = "../game_assets" }
+game_save = { path = "../game_save" }

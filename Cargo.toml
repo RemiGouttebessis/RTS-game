@@ -1,9 +1,22 @@
-[package]
-name = "rts-game"
+[workspace]
+resolver = "2"
+members = [
+    "crates/game",
+    "crates/game_core",
+    "crates/game_sim",
+    "crates/game_render",
+    "crates/game_ui",
+    "crates/game_input",
+    "crates/game_assets",
+    "crates/game_save",
+    "crates/game_net",
+]
+
+[workspace.package]
 version = "0.1.0"
 edition = "2024"
 
-[dependencies]
+[workspace.dependencies]
 bevy = "0.19.1"
 
 # Bevy's own deps are compiled optimized even in debug builds, so iteration stays fast.
