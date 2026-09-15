@@ -16,7 +16,7 @@
 
 use std::path::PathBuf;
 
-use game_worldgen::{generate, image_export, nations, preset};
+use game_worldgen::{generate, image_export, nations, preset, stats};
 
 struct Args {
     preset: String,
@@ -140,6 +140,10 @@ fn main() {
 
     let world = generate(args.width, args.height, args.seed, &chosen_preset);
     let nation_positions = nations::place(&world, args.nation_count, args.seed);
+
+    let min_landmass_size = ((args.width * args.height) as f64 * 0.0015).max(1.0) as usize;
+    let actual_continents = stats::count_landmasses(&world.biome.terrain, min_landmass_size);
+    println!("actual landmasses (>= {min_landmass_size} cells): {actual_continents}");
 
     let mut biome_image = image_export::biome_map(
         args.width,

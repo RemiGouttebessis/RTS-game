@@ -16,6 +16,7 @@ pub mod image_export;
 pub mod nations;
 pub mod noise;
 pub mod preset;
+pub mod stats;
 
 use biome::BiomeMaps;
 use climate::ClimateMaps;

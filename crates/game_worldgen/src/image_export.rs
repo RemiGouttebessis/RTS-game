@@ -77,6 +77,27 @@ pub fn draw_nations(image: &mut RgbImage, positions: &[(usize, usize)]) {
     }
 }
 
+/// Name + swatch color for everything [`biome_map`] can draw, in display
+/// order — a UI can render this as a color key without duplicating (and
+/// risking drifting from) the actual terrain/feature colors above.
+pub fn legend() -> Vec<(&'static str, [u8; 3])> {
+    vec![
+        ("Ocean", terrain_color(Terrain::Ocean)),
+        ("Coast", terrain_color(Terrain::Coast)),
+        ("Lake", terrain_color(Terrain::Lake)),
+        ("Grassland", terrain_color(Terrain::Grassland)),
+        ("Plains", terrain_color(Terrain::Plains)),
+        ("Desert", terrain_color(Terrain::Desert)),
+        ("Tundra", terrain_color(Terrain::Tundra)),
+        ("Snow", terrain_color(Terrain::Snow)),
+        ("Forest", feature_color(Feature::Forest)),
+        ("Jungle", feature_color(Feature::Jungle)),
+        ("Marsh", feature_color(Feature::Marsh)),
+        ("River", RIVER_COLOR),
+        ("Nation", [255, 255, 255]),
+    ]
+}
+
 /// The raw heightmap as grayscale — useful for sanity-checking generation
 /// parameters (continent shapes, mountain belts) independent of biome
 /// classification.

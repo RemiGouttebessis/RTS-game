@@ -125,8 +125,10 @@ later headless on a server, independent of the renderer. For now, output is an i
 terrain — that conversion is future work once the generation itself is in good shape.
 
 **In-game**: Play → Solo → New opens `game_ui::worldgen_menu` — settings on the left (`-`/`+`
-steppers, no text-input widget needed), a live preview `ImageNode` on the right. Every single
-change (Preset, Map size, Continents, Sea level, Humidity, Temperature, Nations, Seed, or
+steppers, no text-input widget needed), a live preview `ImageNode` in the middle, a color legend
+on the right (`image_export::legend()` — name + swatch for every terrain/feature/river/nation
+color `biome_map` can draw, so the key can never drift from the actual colors). Every single
+change (Preset, Resolution, Continents, Sea level, Humidity, Temperature, Nations, Seed, or
 Randomize Seed) regenerates and redraws the preview immediately — there's no separate "Generate"
 button. Regeneration is synchronous on the click (fast enough at these map sizes not to need
 threading); all settings persist in a plain `Resource` while you navigate Back and return. It
@@ -135,13 +137,22 @@ above). The seed steppers/Randomize are a simple wrapping-multiply step, not rea
 just need to look different each time, not be unpredictable.
 
 Exposed knobs, and how each maps onto `Preset`:
-- **Preset** cycles the four named presets below (their "flavor": mountain strength/belt shape,
-  river threshold, octave count — not individually exposed as separate controls).
-- **Continents** (1-16) → `Preset::continent_radius` via `preset::radius_for_count` (see the `2π`
-  note below).
+- **Preset** cycles the four named presets below. Picking one calls
+  `WorldGenSettings::apply_preset_defaults`, which **overwrites** Continents/Sea level/Humidity/
+  Temperature with that preset's own values (converting `continent_radius` back to a count via
+  `preset::count_for_radius`). This used to not happen — switching to "archipelago" kept whatever
+  continent count was left over from the previous preset, so it never actually looked like an
+  archipelago. Preset flavor that stays preset-only, not exposed as a control: mountain
+  strength/belt shape, river threshold, octave count.
+- **Resolution** (128-1024px, width; height is always half) — image detail only. Deliberately
+  doesn't affect how much "world" exists: `continent_radius` is sampled as a fraction of one full
+  trip around the cylinder (see `cylinder_point`), so the same Continents setting produces the
+  same landmasses regardless of resolution — a "Large" resolution is the same world at more
+  pixels, not literally a bigger world. If you want more world, raise Continents/Nations.
+- **Continents** (1-20) → `Preset::continent_radius` via `preset::radius_for_count` (see the `2π`
+  note below). Shown as `target (~actual)` — see below for why those can differ.
 - **Sea level** (0.30-0.70), **Humidity** (±0.30 → `moisture_bias`), **Temperature** (±0.30 →
-  `temperature_bias`, new field, threaded into `climate::generate` the same way `moisture_bias`
-  already was) — each directly overrides the chosen preset's value; `WorldGenSettings::
+  `temperature_bias`) — each directly overrides the chosen preset's value; `WorldGenSettings::
   effective_preset` builds a modified copy of the preset every regeneration, it doesn't mutate the
   `const` presets.
 - **Nations** (1-32) → not a `Preset` field at all. `game_worldgen::nations::place` scatters that
@@ -149,6 +160,15 @@ Exposed knobs, and how each maps onto `Preset`:
   cylinder-wrap-aware distance, land only — no Ocean/Coast/Lake/Snow), drawn onto the preview by
   `image_export::draw_nations` as white-disk-with-black-ring markers. Placement only, no borders or
   growth — it exists so "number of nations" visibly does something ahead of any real nation system.
+
+**Continents: target vs. actual.** The `Continents` count is an *input* to the noise field
+(roughly how many blobs the base octave should produce), not a guarantee — sea level can fragment
+one blob into several islands or merge several into one landmass, and noise is inherently a bit
+random. `game_worldgen::stats::count_landmasses` flood-fills the actual generated terrain (via
+`Grid::neighbors`, so it's cylinder-wrap-aware) and counts distinct landmasses above a
+map-area-relative size threshold (ignoring single-pixel specks). `worldgen_menu` calls this after
+every regeneration and shows it next to the target, e.g. `4 (~3)`. The standalone CLI prints the
+same measurement (`--nations` run also reports `actual landmasses: N`).
 
 `worldgen_menu::rgb_to_bevy_image` is the bridge from `game_worldgen`'s plain `image::RgbImage`
 output to a real `bevy::image::Image` asset: expand RGB → RGBA (alpha 255), wrap in
@@ -170,7 +190,8 @@ cargo run -p game_worldgen --example generate -- --list-presets
 `worldgen_menu` exposes, kept in sync here for CLI-based iteration without the game UI.
 
 Writes `world.png` (the colored map) and `world.elevation.png` (raw grayscale heightmap, useful
-for sanity-checking generation parameters independent of biome classification).
+for sanity-checking generation parameters independent of biome classification), and prints the
+actual measured landmass count (see "Continents: target vs. actual" above).
 
 **Presets** (`preset.rs`): `continents`, `pangaea`, `archipelago`, `highlands` — different values
 for the same tunable knobs (continent size/count, sea level, mountain strength, river threshold,

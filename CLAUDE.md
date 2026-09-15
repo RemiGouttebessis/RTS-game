@@ -30,10 +30,17 @@ see `crates/game/src/diagnostics/overlay.rs`), then wires in the library crates:
   `main_menu` defines the private `MainMenuScreen` sub-state of `GameState::MainMenu` — `Root`
   (Play/Quit) → `play_mode_menu` (`PlayMode`: Solo/Multiplayer, Multiplayer shown dimmed/WIP, no
   `Button`) → `solo_mode_menu` (`SoloMode`: New/Saves, Saves shown dimmed/WIP) → `worldgen_menu`
-  (`WorldGen`: left column of `-`/`+` stepper rows — Preset, Map size, Continents, Sea level,
-  Humidity, Temperature, Nations, Seed/Randomize — right column a live `ImageNode` preview;
-  *every* settings change regenerates immediately via `generate_image`, no separate Generate
-  button). Separately, `pause_menu` (Escape-toggled `PauseState::Paused`;
+  (`WorldGen`: left column of `-`/`+` stepper rows — Preset, Resolution, Continents, Sea level,
+  Humidity, Temperature, Nations, Seed/Randomize — middle a live `ImageNode` preview, right a
+  color-key legend (`image_export::legend()`); *every* settings change regenerates immediately via
+  `generate_image`, no separate Generate button. Picking a **Preset** calls
+  `WorldGenSettings::apply_preset_defaults` to overwrite Continents/Sea level/Humidity/Temperature
+  with that preset's own values — without this, switching presets kept stale values from whatever
+  was selected before, which is why "archipelago" used to not look like an archipelago.
+  **Resolution** only changes image detail (width/height in pixels, height always half width);
+  it's deliberately decoupled from how much world exists, since `continent_radius` is sampled as a
+  fraction of one full loop of the cylinder regardless of pixel count — Continents/Nations control
+  "how much world", not Resolution). Separately, `pause_menu` (Escape-toggled `PauseState::Paused`;
   defines the private `PauseMenuScreen` sub-state — `Root`/`Keybinds` — and `handle_escape`, context-
   sensitive: cancel a keybind capture, else back out of the keybinds screen, else open/close the pause
   menu), `keybinds_menu` (`PauseMenuScreen::Keybinds` — click a bind, press a new key, saved immediately
@@ -62,9 +69,13 @@ see `crates/game/src/diagnostics/overlay.rs`), then wires in the library crates:
   positions, cylinder-wrap-aware spacing), not part of the pipeline — it only reads the finished
   `World`. Hand-rolled 3D Perlin noise (no `noise` crate) so the cylinder's seamless-X-wrap sampling
   (`noise::cylinder_point`) is under full control; `image` is a real dependency (both here and in
-  `game_ui`, to build/read `RgbImage`). See "World generation" in `README.md` before retuning presets —
-  the radius-to-feature-count relationship is easy to misjudge by an order of magnitude (it already
-  was, once).
+  `game_ui`, to build/read `RgbImage`). `stats::count_landmasses` flood-fills the actual generated
+  terrain (cylinder-wrap-aware via `Grid::neighbors`) to report the *real* landmass count, since the
+  `Continents` input is only an expected blob count for the noise field — sea level and randomness
+  can split or merge blobs, so target and actual often differ (`worldgen_menu` shows both; the CLI
+  prints the actual count too). See "World generation" in `README.md` before retuning presets — the
+  radius-to-feature-count relationship is easy to misjudge by an order of magnitude (it already was,
+  once).
 
 This is still early: most crates are empty scaffolding. Extend the existing plugin/crate structure rather
 than introducing new top-level crates or restructuring further unless the task calls for it.

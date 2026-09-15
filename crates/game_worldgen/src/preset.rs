@@ -45,6 +45,14 @@ pub fn radius_for_count(count: f64) -> f64 {
     count / core::f64::consts::TAU
 }
 
+/// Inverse of [`radius_for_count`] — recovers the "roughly this many
+/// landmasses" figure a preset's own `continent_radius` implies, so a UI can
+/// show/seed a count control from whichever preset is selected instead of
+/// leaving it at a stale, unrelated value.
+pub fn count_for_radius(radius: f64) -> f64 {
+    radius * core::f64::consts::TAU
+}
+
 pub const CONTINENTS: Preset = Preset {
     name: "continents",
     continent_radius: 0.65,
