@@ -12,7 +12,9 @@
 //!
 //! `--continents`/`--sea-level`/`--humidity`/`--temperature` override the
 //! chosen preset's values — same knobs `game_ui::worldgen_menu` exposes as
-//! +/- steppers, kept in sync here for faster CLI iteration.
+//! +/- steppers, kept in sync here for faster CLI iteration. `--no-correct`
+//! skips `elevation::correct_continent_count` entirely (the UI's "Split/
+//! Merge" toggle), so the noise's raw landmass count/shape is untouched.
 
 use std::path::PathBuf;
 
@@ -23,10 +25,11 @@ struct Args {
     seed: u64,
     width: usize,
     height: usize,
-    continents: Option<f64>,
+    continents: Option<u32>,
     sea_level: Option<f32>,
     humidity: Option<f32>,
     temperature: Option<f32>,
+    no_correct: bool,
     nation_count: usize,
     out: PathBuf,
 }
@@ -42,6 +45,7 @@ impl Default for Args {
             sea_level: None,
             humidity: None,
             temperature: None,
+            no_correct: false,
             nation_count: 8,
             out: PathBuf::from("world.png"),
         }
@@ -78,6 +82,7 @@ fn parse_args() -> Result<Args, String> {
             "--nations" => {
                 args.nation_count = value()?.parse().map_err(|e| format!("--nations: {e}"))?
             }
+            "--no-correct" => args.no_correct = true,
             "--out" => args.out = PathBuf::from(value()?),
             "--list-presets" => {
                 for p in preset::ALL {
@@ -100,7 +105,7 @@ fn main() {
             eprintln!(
                 "usage: generate --preset <name> --seed <u64> --width <n> --height <n> \
                  [--continents <n>] [--sea-level <0-1>] [--humidity <-1-1>] \
-                 [--temperature <-1-1>] [--nations <n>] --out <path>"
+                 [--temperature <-1-1>] [--nations <n>] [--no-correct] --out <path>"
             );
             eprintln!("       generate --list-presets");
             std::process::exit(1);
@@ -121,7 +126,7 @@ fn main() {
     };
 
     if let Some(continents) = args.continents {
-        chosen_preset.continent_radius = preset::radius_for_count(continents);
+        chosen_preset.continent_count = continents;
     }
     if let Some(sea_level) = args.sea_level {
         chosen_preset.sea_level = sea_level;
@@ -131,6 +136,9 @@ fn main() {
     }
     if let Some(temperature) = args.temperature {
         chosen_preset.temperature_bias = temperature;
+    }
+    if args.no_correct {
+        chosen_preset.correct_continents = false;
     }
 
     println!(
@@ -159,8 +167,12 @@ fn main() {
     println!("wrote {}", args.out.display());
 
     let elevation_path = args.out.with_extension("elevation.png");
-    let elevation_image =
-        image_export::elevation_grayscale(args.width, args.height, &world.elevation);
+    let elevation_image = image_export::elevation_hypsometric(
+        args.width,
+        args.height,
+        &world.elevation,
+        chosen_preset.sea_level,
+    );
     elevation_image
         .save(&elevation_path)
         .unwrap_or_else(|err| panic!("failed to write {}: {err}", elevation_path.display()));

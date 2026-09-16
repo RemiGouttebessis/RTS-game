@@ -5,16 +5,25 @@
 pub struct Preset {
     pub name: &'static str,
 
-    /// Radius (in noise-space) of the circle the base continent octave is
-    /// sampled on — see `noise::cylinder_point`. A single Perlin octave has
-    /// a wavelength of ~1 noise-space unit, and the circle's circumference
-    /// is `2π * radius`, so this produces roughly `2π * radius` landmasses
-    /// around the loop: ~0.2 for one supercontinent, ~0.6-0.7 for a
-    /// handful of continents, ~2.5+ for many small islands. Easy to
-    /// mis-tune by an order of magnitude if you forget the `2π` — that's
-    /// exactly what happened the first time these were picked.
-    pub continent_radius: f64,
+    /// Target number of landmasses. Continents come from layered noise (see
+    /// `elevation::generate`), which only produces *roughly* this many
+    /// blobs on its own; `elevation::correct_continent_count` merges or
+    /// splits landmasses after the fact to close the gap. That two-step
+    /// approach (organic noise shape, then a count correction pass) reads
+    /// far more natural than trying to force the exact count out of the
+    /// noise/distance-field math directly — that was tried and looked
+    /// conspicuously artificial (see this field's git history).
+    pub continent_count: u32,
+    /// Octave count for the main continent-shape noise layer. Higher = more
+    /// detail folded into the coastline at generation time (before the
+    /// count-correction pass runs).
     pub continent_octaves: u32,
+    /// Whether `elevation::correct_continent_count` runs at all — off skips
+    /// straight to whatever `continent_count`'s noise landed on, no
+    /// merge/split post-processing. `worldgen_menu`'s "Split/Merge" toggle
+    /// controls this directly (see `WorldGenSettings::correct_continents`);
+    /// every `const` preset below defaults it on.
+    pub correct_continents: bool,
 
     /// Fraction of the map below this elevation is ocean.
     pub sea_level: f32,
@@ -38,28 +47,14 @@ pub struct Preset {
     pub temperature_bias: f32,
 }
 
-/// Converts a user-facing "roughly this many landmasses" count into the
-/// radius [`crate::elevation::generate`] actually samples on — see
-/// `continent_radius`'s doc comment above for the `2π` relationship.
-pub fn radius_for_count(count: f64) -> f64 {
-    count / core::f64::consts::TAU
-}
-
-/// Inverse of [`radius_for_count`] — recovers the "roughly this many
-/// landmasses" figure a preset's own `continent_radius` implies, so a UI can
-/// show/seed a count control from whichever preset is selected instead of
-/// leaving it at a stale, unrelated value.
-pub fn count_for_radius(radius: f64) -> f64 {
-    radius * core::f64::consts::TAU
-}
-
 pub const CONTINENTS: Preset = Preset {
     name: "continents",
-    continent_radius: 0.65,
+    continent_count: 4,
     continent_octaves: 4,
+    correct_continents: true,
     sea_level: 0.5,
-    mountain_strength: 0.3,
-    mountain_belt_radius: 0.4,
+    mountain_strength: 0.42,
+    mountain_belt_radius: 0.28,
     river_threshold: 0.02,
     moisture_bias: 0.0,
     temperature_bias: 0.0,
@@ -67,11 +62,12 @@ pub const CONTINENTS: Preset = Preset {
 
 pub const PANGAEA: Preset = Preset {
     name: "pangaea",
-    continent_radius: 0.2,
+    continent_count: 1,
     continent_octaves: 4,
+    correct_continents: true,
     sea_level: 0.45,
-    mountain_strength: 0.32,
-    mountain_belt_radius: 0.32,
+    mountain_strength: 0.45,
+    mountain_belt_radius: 0.22,
     river_threshold: 0.02,
     moisture_bias: 0.0,
     temperature_bias: 0.0,
@@ -79,11 +75,12 @@ pub const PANGAEA: Preset = Preset {
 
 pub const ARCHIPELAGO: Preset = Preset {
     name: "archipelago",
-    continent_radius: 2.5,
+    continent_count: 16,
     continent_octaves: 5,
+    correct_continents: true,
     sea_level: 0.56,
-    mountain_strength: 0.22,
-    mountain_belt_radius: 0.48,
+    mountain_strength: 0.32,
+    mountain_belt_radius: 0.34,
     river_threshold: 0.03,
     moisture_bias: 0.15,
     temperature_bias: 0.0,
@@ -91,11 +88,12 @@ pub const ARCHIPELAGO: Preset = Preset {
 
 pub const HIGHLANDS: Preset = Preset {
     name: "highlands",
-    continent_radius: 0.65,
+    continent_count: 4,
     continent_octaves: 4,
+    correct_continents: true,
     sea_level: 0.48,
-    mountain_strength: 0.5,
-    mountain_belt_radius: 0.64,
+    mountain_strength: 0.65,
+    mountain_belt_radius: 0.45,
     river_threshold: 0.015,
     moisture_bias: -0.05,
     temperature_bias: 0.0,

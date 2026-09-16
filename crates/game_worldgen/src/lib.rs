@@ -16,6 +16,7 @@ pub mod image_export;
 pub mod nations;
 pub mod noise;
 pub mod preset;
+pub mod sampling;
 pub mod stats;
 
 use biome::BiomeMaps;
@@ -54,6 +55,7 @@ pub fn generate(width: usize, height: usize, seed: u64, preset: &Preset) -> Worl
     let biome = biome::generate(
         width,
         height,
+        seed,
         &elevation,
         &hydrology,
         &climate.temperature,

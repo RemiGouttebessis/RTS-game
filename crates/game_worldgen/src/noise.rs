@@ -115,7 +115,11 @@ fn grad(hash: u8, x: f64, y: f64, z: f64) -> f64 {
     u + v
 }
 
-fn splitmix64(x: u64) -> u64 {
+/// A small, fast, well-mixed hash — used here to seed the permutation table,
+/// and reused (via [`crate::sampling`] and elsewhere) for deterministic
+/// pseudo-randomness anywhere a cell just needs "an unpredictable-looking
+/// but reproducible number," not a full noise field.
+pub(crate) fn splitmix64(x: u64) -> u64 {
     let x = x.wrapping_add(0x9E3779B97F4A7C15);
     let mut z = x;
     z = (z ^ (z >> 30)).wrapping_mul(0xBF58476D1CE4E5B9);

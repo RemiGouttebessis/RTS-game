@@ -30,17 +30,30 @@ see `crates/game/src/diagnostics/overlay.rs`), then wires in the library crates:
   `main_menu` defines the private `MainMenuScreen` sub-state of `GameState::MainMenu` — `Root`
   (Play/Quit) → `play_mode_menu` (`PlayMode`: Solo/Multiplayer, Multiplayer shown dimmed/WIP, no
   `Button`) → `solo_mode_menu` (`SoloMode`: New/Saves, Saves shown dimmed/WIP) → `worldgen_menu`
-  (`WorldGen`: left column of `-`/`+` stepper rows — Preset, Resolution, Continents, Sea level,
-  Humidity, Temperature, Nations, Seed/Randomize — middle a live `ImageNode` preview, right a
-  color-key legend (`image_export::legend()`); *every* settings change regenerates immediately via
-  `generate_image`, no separate Generate button. Picking a **Preset** calls
-  `WorldGenSettings::apply_preset_defaults` to overwrite Continents/Sea level/Humidity/Temperature
-  with that preset's own values — without this, switching presets kept stale values from whatever
-  was selected before, which is why "archipelago" used to not look like an archipelago.
-  **Resolution** only changes image detail (width/height in pixels, height always half width);
-  it's deliberately decoupled from how much world exists, since `continent_radius` is sampled as a
-  fraction of one full loop of the cylinder regardless of pixel count — Continents/Nations control
-  "how much world", not Resolution). Separately, `pause_menu` (Escape-toggled `PauseState::Paused`;
+  (`WorldGen`: left column of `-`/`+` stepper rows — View, Highlight, Split/Merge, Preset, Resolution,
+  Continents, Sea level, Humidity, Temperature, Nations, Seed/Randomize — middle a live `ImageNode` preview in a
+  fixed-size, clipped viewport with its own zoom (`-`/`+`, `x1.0`–`x6.0`), pan (a `<`/`^`/`v`/`>` pad)
+  and Reset View controls underneath, right a color-key legend (`image_export::legend()`); *every*
+  settings change regenerates immediately via `generate_image`, no separate Generate button. Picking a
+  **Preset** calls `WorldGenSettings::apply_preset_defaults` to overwrite Continents/Sea level/
+  Humidity/Temperature with that preset's own values — without this, switching presets kept stale
+  values from whatever was selected before, which is why "archipelago" used to not look like an
+  archipelago. **Resolution** only changes image detail (width/height in pixels, height always half
+  width); it's deliberately decoupled from how much world exists — see `game_worldgen`'s entry below.
+  **View** toggles the preview between the biome map and the hypsometric heightmap; **Highlight**
+  overrides either view with `image_export::highlight_landmasses` (each landmass a distinct flat
+  color, via `stats::label_landmasses`) — a verification view for checking the actual continent count
+  and separation at a glance, which is otherwise hard to eyeball through biome coloring.
+  **Split/Merge** toggles `WorldGenSettings::correct_continents` (see `game_worldgen`'s entry for what
+  it controls) — off shows the raw noise-generated landmasses, letting you tell apart "the correction
+  pass did this" from "the noise itself did this" while tuning a preset. Zoom/pan is a
+  `PreviewZoom` resource (persists across screen visits, like `WorldGenSettings`) driving the
+  displayed image node's size/position inside the clipped viewport — buttons only, deliberately not
+  scroll-wheel/drag: `game_input`'s "consumers never read `ButtonInput`/`MouseWheel` directly" rule
+  (see its entry below) covers this screen too, and every other control here is already button-driven.
+  Zoom/pan changes never trigger regeneration (`button_actions` tracks that separately from settings
+  changes that do). Separately,
+  `pause_menu` (Escape-toggled `PauseState::Paused`;
   defines the private `PauseMenuScreen` sub-state — `Root`/`Keybinds` — and `handle_escape`, context-
   sensitive: cancel a keybind capture, else back out of the keybinds screen, else open/close the pause
   menu), `keybinds_menu` (`PauseMenuScreen::Keybinds` — click a bind, press a new key, saved immediately
@@ -60,22 +73,101 @@ see `crates/game/src/diagnostics/overlay.rs`), then wires in the library crates:
   in-game preview screen, and also runnable standalone via `cargo run -p game_worldgen --example
   generate -- --preset continents --seed 42 --out world.png` (also takes `--continents`/`--sea-level`/
   `--humidity`/`--temperature`/`--nations`, kept in sync with the UI's knobs) for faster
-  parameter-tuning iteration without the game UI. Output is an image either way, not mesh terrain yet
-  — that conversion is future work. `Preset` (`preset.rs`) holds the "flavor" knobs (mountain
-  strength/belt, river threshold, octaves); `continent_radius`/`sea_level`/`moisture_bias`/
-  `temperature_bias` get overridden per-generation from user-facing values
-  (`WorldGenSettings::effective_preset` in `worldgen_menu.rs`) rather than being baked into the
-  `const` presets. `nations::place` is a separate post-`generate()` step (rejection-sampled land-only
-  positions, cylinder-wrap-aware spacing), not part of the pipeline — it only reads the finished
-  `World`. Hand-rolled 3D Perlin noise (no `noise` crate) so the cylinder's seamless-X-wrap sampling
+  parameter-tuning iteration without the game UI. Output is an image either way (colored biome map,
+  or `image_export::elevation_hypsometric`'s topographic heightmap — `worldgen_menu`'s View toggle
+  switches between them), not mesh terrain yet — that conversion is future work.
+  **Continents are noise-shaped, then count-corrected — not a distance field.** A seed-point
+  distance-field approach (grow each continent from one of `continent_count` well-spaced seeds) was
+  tried first specifically to *guarantee* the exact count, and it worked — verified against targets
+  1-24 — but every continent came out a recognizable blob; that's inherent to distance fields, not
+  fixable by adding more edge noise. Reverted to pure `Fbm3` noise for the actual shape (same
+  organic character as the rest of the generator), with `elevation::correct_continent_count`
+  flood-filling the result afterward and merging the closest two landmasses (land bridge between
+  centroids) or splitting the largest one (a gently wavy strait across its shorter axis, not a
+  straight line — a straight cut reads as obviously artificial too) until the count matches or an
+  iteration cap is hit. Gets close almost always, exact often, not guaranteed — that's the accepted
+  tradeoff for organic shape over exact-by-construction. **Splits are a geodesic partition, not a
+  coordinate-line cut**: an earlier version of `split_land` cut at the median of the component's
+  cell coordinates along its longer axis (a gently wiggled line, to avoid reading as artificial) —
+  but noise-generated continents are routinely concave (horseshoe bays, peninsulas wrapping back on
+  themselves), and on those a coordinate-line cut carves a scratch across the landmass *without*
+  actually disconnecting it, since the two "halves" stay joined around the open side.
+  `label_land_components` then still reports one landmass, so `correct_continent_count` retries with
+  a different jitter next iteration — and each failed attempt leaves another thin, pointless channel
+  of ocean gouged into the continent that never finishes separating anything (a "river of ocean"
+  running through otherwise-solid land). `split_land` now seeds two points at the landmass's
+  approximate diameter (farthest-from-farthest via double BFS), then does a simultaneous
+  multi-source BFS over just that component's cells so every cell is labeled by whichever seed's
+  flood front reaches it first — a geodesic Voronoi split that follows the landmass's actual
+  connectivity and so can't fail to separate it, however concave. **Both the split and the merge are
+  wide, not a hairline.** The gap between the two BFS halves (a second multi-source BFS from the seam
+  gives every cell its ring-distance from it) and `bridge_land`'s isthmus are both cleared/raised out
+  to `strait_half_width` (map-scaled, `noise`-perturbed per cell so the edge isn't a uniform band) —
+  at the old fixed 1-3px width, either operation "worked" in the sense that the landmass count came
+  out right, but at any resolution big enough to look good otherwise the strait/isthmus was a handful
+  of pixels swallowed by antialiasing, i.e. invisible. `bridge_land` also gives its isthmus a
+  radial-dome elevation profile (high at the centerline, tapering to just-above-`sea_level` at the
+  edge) plus tiny per-cell jitter (`cell_jitter`) rather than one flat constant everywhere, purely so
+  it doesn't read as a dead-flat mesa in the elevation view — `hydrology::generate`'s priority-flood
+  drainage (below) means this is cosmetic, not load-bearing for the merge reading as actual land; an
+  earlier version *needed* an `ElevationMaps::forced_land` mask to stop the old lake-detection
+  heuristic from misreading the whole isthmus as one big depression, which is no longer necessary and
+  has been removed. **`worldgen_menu`'s "Split/Merge" toggle** (`WorldGenSettings::correct_continents`
+  → `Preset::correct_continents`, read by `elevation::generate` to skip calling
+  `correct_continent_count` at all) shows the raw noise-generated landmasses untouched — useful for
+  telling "is this ugly because of the correction pass" from "is this ugly regardless." The CLI's
+  equivalent is `--no-correct`. **If you touch `label_land_components` again**:
+  `Grid::neighbors` returns *raw*, unwrapped offsets
+  (e.g. `-1` past the west edge) meant to be passed straight to `Grid::get`/`set` (which wrap via
+  `rem_euclid`) — casting such an offset directly to `usize` wraps `-1` to `usize::MAX` instead,
+  corrupting any component touching the map's seam and panicking later ("attempt to negate with
+  overflow") on the resulting garbage coordinate. Keep flood-fill walks in `i64` throughout
+  (`stats::count_landmasses`'s pattern) and wrap-and-cast only once, at the point a result is
+  stored. `Preset` (`preset.rs`) holds the
+  "flavor" knobs (mountain strength/belt, river threshold, continent-noise octaves) plus
+  `continent_count` directly; `sea_level`/`moisture_bias`/`temperature_bias` get overridden
+  per-generation from user-facing values (`WorldGenSettings::effective_preset` in
+  `worldgen_menu.rs`) rather than being baked into the `const` presets. **Mountain belts are chunky
+  massifs, not hill speckle**: `elevation::generate`'s `BELT_THRESHOLD` (0.62, was 0.72) widens how
+  much of the low-frequency belt mask actually counts as mountainous; every preset's
+  `mountain_strength`/`mountain_belt_radius` were raised/lowered respectively on top of that for
+  taller peaks packed into fewer, bigger contiguous ranges rather than many small thin ones.
+  **Hydrology is priority-flood, not a per-cell sink heuristic**: `hydrology::generate` used to do
+  steepest-descent flow direction (landing on `None`/a "sink" wherever no neighbor was strictly
+  lower) and a separate "sink cell + near-equal-elevation neighbors" pass for lakes — both are local,
+  one-hop heuristics blind to the terrain beyond a cell's immediate neighbors, so rivers dead-ended at
+  every small pit instead of continuing downhill to the sea, and lake shape/extent was an
+  approximation. It now runs a proper priority-flood depression fill (Barnes et al.) seeded from the
+  ocean: repeatedly pop the lowest-`filled` unvisited cell from a min-heap and relax its neighbors to
+  `max(their elevation, this cell's filled elevation)`, recording which cell each neighbor got relaxed
+  from as its flow target. The result has no interior local minima except the ocean itself, so every
+  land cell has a real, monotonically-draining path to the sea (rivers now actually trace the
+  terrain's verticality end to end), and `filled > elevation` at a cell is, exactly and by
+  construction, a real filled basin — that's the new `is_lake` rule, replacing the old heuristic
+  entirely. `nations::place` is a
+  separate post-`generate()` step (rejection-sampled land-only positions via `sampling.rs`,
+  cylinder-wrap-aware spacing), not part of the pipeline — it only reads the finished `World`.
+  `biome.rs` adds **Ice** (cold Ocean/Coast), **Savanna** (hot+dry) and **Steppe** (cold+dry —
+  Desert's cold counterpart the way Savanna is Plains'/Grassland's warm one; both splits reuse the
+  same `temp > 0.55` threshold) terrain, plus **Volcano**/**Oasis**/**Floodplains**/**Reef**
+  features. Floodplains is river-adjacent Desert/Steppe specifically (vs. Marsh's general high
+  ambient moisture). Reef is a feature *on* `Coast` — `biome_map`'s `Coast` match arm had to start
+  rendering features at all for this, since it previously skipped feature rendering entirely (a
+  latent bug, harmless only because nothing had ever put a feature on a water tile before).
+  Volcano/Oasis/Reef are placed via a deterministic per-cell hash (`biome::cell_random`, reusing
+  `noise::splitmix64`), not a noise field — they just need "unpredictable but reproducible here."
+  Their odds (in `biome::generate`) were bumped well past "so rare you might never see one": Volcano
+  0.015→0.05 (on `Mountains`), Oasis 0.03→0.09 (on `Desert`), Reef 0.12→0.22 (on warm `Coast`).
+  Hand-rolled 3D Perlin noise (no `noise` crate) so the cylinder's seamless-X-wrap sampling
   (`noise::cylinder_point`) is under full control; `image` is a real dependency (both here and in
-  `game_ui`, to build/read `RgbImage`). `stats::count_landmasses` flood-fills the actual generated
-  terrain (cylinder-wrap-aware via `Grid::neighbors`) to report the *real* landmass count, since the
-  `Continents` input is only an expected blob count for the noise field — sea level and randomness
-  can split or merge blobs, so target and actual often differ (`worldgen_menu` shows both; the CLI
-  prints the actual count too). See "World generation" in `README.md` before retuning presets — the
-  radius-to-feature-count relationship is easy to misjudge by an order of magnitude (it already was,
-  once).
+  `game_ui`, to build/read `RgbImage`). `stats::label_landmasses` flood-fills the actual generated
+  terrain (cylinder-wrap-aware via `Grid::neighbors`) and gives each landmass a 0-based id (`-1` for
+  ocean/lake/ice/coast and anything under the min-size threshold); `count_landmasses` is just its
+  count, so the number `worldgen_menu` shows next to the target and the CLI prints always agrees with
+  what `image_export::highlight_landmasses` (worldgen_menu's Highlight toggle) draws. Resolution goes
+  up to 2048×1024
+  (~2.2s to generate including the correction pass, measured) — Continents up to 60. See "World
+  generation" in `README.md` before retuning presets.
 
 This is still early: most crates are empty scaffolding. Extend the existing plugin/crate structure rather
 than introducing new top-level crates or restructuring further unless the task calls for it.

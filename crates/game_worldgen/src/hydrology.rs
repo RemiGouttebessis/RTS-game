@@ -1,15 +1,41 @@
-use std::cmp::Ordering;
+use std::cmp::{Ordering, Reverse};
+use std::collections::BinaryHeap;
 
 use crate::grid::Grid;
 
 pub struct HydrologyMaps {
     pub is_ocean: Grid<bool>,
-    /// Simplified stand-in for proper depression-filling hydrology: land
-    /// cells with no lower neighbor (and a small ring around them), rather
-    /// than exactly-computed drainage basins. Good enough for a preview
-    /// map; worth revisiting if lake placement/shape ever needs to be exact.
+    /// A filled depression (a real topographic basin, not a single sunken
+    /// pixel) — see `generate`'s priority-flood pass.
     pub is_lake: Grid<bool>,
     pub is_river: Grid<bool>,
+}
+
+/// One entry in the priority-flood frontier: a cell paired with its `filled`
+/// elevation (see `generate`), ordered so a `BinaryHeap` pops the lowest
+/// first. Elevation is always finite here (never NaN), so `total_cmp` gives
+/// a total order without needing a NaN-checked float wrapper.
+struct Frontier {
+    filled: f32,
+    x: i64,
+    y: i64,
+}
+
+impl PartialEq for Frontier {
+    fn eq(&self, other: &Self) -> bool {
+        self.filled == other.filled
+    }
+}
+impl Eq for Frontier {}
+impl PartialOrd for Frontier {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+impl Ord for Frontier {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.filled.total_cmp(&other.filled)
+    }
 }
 
 pub fn generate(
@@ -27,41 +53,78 @@ pub fn generate(
         }
     }
 
-    // Flow direction: each land cell points at its steepest-descent
-    // neighbor, or `None` if it's a local minimum (a sink — no ocean
-    // neighbor is lower, so water pools there instead of draining out).
+    // Priority-flood depression filling (Barnes et al.): starting from the
+    // ocean (the one boundary every drop of rain eventually has to reach),
+    // repeatedly pop the lowest-`filled` unvisited cell and relax its
+    // neighbors to `max(their own elevation, this cell's filled elevation)`.
+    // The result is a "filled" surface with no interior local minima except
+    // the ocean itself — every land cell has a monotonically non-increasing
+    // 8-connected path down to the ocean along `filled` values, so flow
+    // direction (recorded as "which cell did I get relaxed from") is by
+    // construction always defined and always actually drains, rather than
+    // stopping dead at every small pit the way a plain steepest-descent scan
+    // does. A cell where `filled > elevation` sat inside a depression that
+    // got submerged to reach that path — i.e. a lake, and its exact extent,
+    // not an approximation of one. This replaces what used to be two
+    // separate heuristics (a steepest-descent-with-`None`-sinks pass for
+    // rivers, and a "no lower neighbor + near-equal neighbors" pass for
+    // lakes) with one pass that both derive from correctly, so rivers and
+    // lakes actually agree with the terrain's real verticality instead of
+    // each approximating it their own way.
+    let mut filled = Grid::<f32>::new(width, height);
+    let mut visited = Grid::<bool>::new(width, height);
     let mut flow_target: Vec<Option<(i64, i64)>> = vec![None; width * height];
-    let mut cells: Vec<(i64, i64)> = Vec::with_capacity(width * height);
+    let mut heap: BinaryHeap<Reverse<Frontier>> = BinaryHeap::new();
 
     for y in 0..height {
         for x in 0..width {
             let pos = (x as i64, y as i64);
-            cells.push(pos);
             if *is_ocean.get(pos.0, pos.1) {
-                continue;
+                let h = *elevation.get(pos.0, pos.1);
+                visited.set(pos.0, pos.1, true);
+                filled.set(pos.0, pos.1, h);
+                heap.push(Reverse(Frontier {
+                    filled: h,
+                    x: pos.0,
+                    y: pos.1,
+                }));
             }
-
-            let here = *elevation.get(pos.0, pos.1);
-            let mut best: Option<((i64, i64), f32)> = None;
-            for (nx, ny) in elevation.neighbors(pos.0, pos.1) {
-                let drop = here - *elevation.get(nx, ny);
-                let is_better =
-                    drop > 0.0 && best.map(|(_, best_drop)| drop > best_drop).unwrap_or(true);
-                if is_better {
-                    best = Some(((nx, ny), drop));
-                }
-            }
-            flow_target[y * width + x] = best.map(|(target, _)| target);
         }
     }
 
-    // Flow accumulation (D8): process cells from highest to lowest
-    // elevation so every upstream cell has already deposited its flow
-    // before it's passed on to whatever it drains into.
+    while let Some(Reverse(here)) = heap.pop() {
+        for (nx, ny) in elevation.neighbors(here.x, here.y) {
+            let wx = nx.rem_euclid(width as i64);
+            if *visited.get(wx, ny) {
+                continue;
+            }
+            visited.set(wx, ny, true);
+
+            let raw = *elevation.get(wx, ny);
+            let f = raw.max(here.filled);
+            filled.set(wx, ny, f);
+            flow_target[ny as usize * width + wx as usize] = Some((here.x, here.y));
+            heap.push(Reverse(Frontier {
+                filled: f,
+                x: wx,
+                y: ny,
+            }));
+        }
+    }
+
+    // Flow accumulation (D8): process cells from highest to lowest `filled`
+    // so every upstream cell has already deposited its flow before it's
+    // passed on to whatever it drains into — matches the order `filled` was
+    // actually assigned in above, so every target really has been visited
+    // first regardless of how raw elevation compares within a lake's flat
+    // surface.
+    let mut cells: Vec<(i64, i64)> = (0..height)
+        .flat_map(|y| (0..width).map(move |x| (x as i64, y as i64)))
+        .collect();
     cells.sort_by(|a, b| {
-        let ea = *elevation.get(a.0, a.1);
-        let eb = *elevation.get(b.0, b.1);
-        eb.partial_cmp(&ea).unwrap_or(Ordering::Equal)
+        let fa = *filled.get(a.0, a.1);
+        let fb = *filled.get(b.0, b.1);
+        fb.total_cmp(&fa)
     });
 
     let mut flow_accumulation = Grid::<f32>::new(width, height);
@@ -104,9 +167,11 @@ pub fn generate(
         }
     }
 
-    // Lakes: sinks (no lower neighbor, not ocean), plus their immediate
-    // near-equal-elevation neighbors, so a lake reads as a small pool
-    // rather than a single pixel.
+    // A lake is exactly the cells priority-flood had to submerge to find a
+    // drainage path — a real filled basin, shaped however the surrounding
+    // terrain actually shapes it, rather than a sink pixel plus whatever
+    // happened to be within 0.01 of its elevation.
+    const LAKE_EPSILON: f32 = 0.001;
     let mut is_lake = Grid::<bool>::new(width, height);
     for y in 0..height {
         for x in 0..width {
@@ -114,19 +179,10 @@ pub fn generate(
             if *is_ocean.get(pos.0, pos.1) {
                 continue;
             }
-            if flow_target[y * width + x].is_some() {
-                continue;
-            }
-
-            let here = *elevation.get(pos.0, pos.1);
-            is_lake.set(pos.0, pos.1, true);
-            for (nx, ny) in elevation.neighbors(pos.0, pos.1) {
-                if *is_ocean.get(nx, ny) {
-                    continue;
-                }
-                if (*elevation.get(nx, ny) - here).abs() < 0.01 {
-                    is_lake.set(nx, ny, true);
-                }
+            let raw = *elevation.get(pos.0, pos.1);
+            let f = *filled.get(pos.0, pos.1);
+            if f > raw + LAKE_EPSILON {
+                is_lake.set(pos.0, pos.1, true);
             }
         }
     }

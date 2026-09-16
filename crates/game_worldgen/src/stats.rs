@@ -8,9 +8,26 @@ use crate::grid::Grid;
 /// level, coastline fragmentation, and randomness can split one blob into
 /// several islands or merge several into one landmass.
 pub fn count_landmasses(terrain: &Grid<Terrain>, min_size: usize) -> usize {
+    label_landmasses(terrain, min_size).1
+}
+
+/// Flood-fills connected landmasses (same rule as `count_landmasses`: 8-
+/// connected, cylinder-wrap-aware, specks under `min_size` don't count) and
+/// labels every cell with its landmass's 0-based index in flood-fill
+/// encounter order, or `-1` for ocean/lake/ice/coast and discarded specks.
+/// Shared by `count_landmasses` and the world-gen preview's continent-
+/// highlight overlay, so both always agree on what counts as "a continent."
+pub fn label_landmasses(terrain: &Grid<Terrain>, min_size: usize) -> (Grid<i32>, usize) {
+    let mut labels = Grid::<i32>::new(terrain.width, terrain.height);
+    for y in 0..terrain.height {
+        for x in 0..terrain.width {
+            labels.set(x as i64, y as i64, -1);
+        }
+    }
+
     let mut visited = Grid::<bool>::new(terrain.width, terrain.height);
     let mut stack = Vec::new();
-    let mut count = 0;
+    let mut next_id = 0i32;
 
     for y in 0..terrain.height {
         for x in 0..terrain.width {
@@ -19,11 +36,11 @@ pub fn count_landmasses(terrain: &Grid<Terrain>, min_size: usize) -> usize {
                 continue;
             }
 
-            let mut size = 0;
             stack.push(pos);
             visited.set(pos.0, pos.1, true);
+            let mut member = Vec::new();
             while let Some((cx, cy)) = stack.pop() {
-                size += 1;
+                member.push((cx, cy));
                 for (nx, ny) in terrain.neighbors(cx, cy) {
                     if !*visited.get(nx, ny) && is_land(*terrain.get(nx, ny)) {
                         visited.set(nx, ny, true);
@@ -32,15 +49,21 @@ pub fn count_landmasses(terrain: &Grid<Terrain>, min_size: usize) -> usize {
                 }
             }
 
-            if size >= min_size {
-                count += 1;
+            if member.len() >= min_size {
+                for (cx, cy) in member {
+                    labels.set(cx, cy, next_id);
+                }
+                next_id += 1;
             }
         }
     }
 
-    count
+    (labels, next_id as usize)
 }
 
 fn is_land(terrain: Terrain) -> bool {
-    !matches!(terrain, Terrain::Ocean | Terrain::Coast | Terrain::Lake)
+    !matches!(
+        terrain,
+        Terrain::Ocean | Terrain::Coast | Terrain::Lake | Terrain::Ice
+    )
 }

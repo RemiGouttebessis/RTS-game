@@ -2,6 +2,7 @@ use image::{ImageBuffer, Rgb, RgbImage};
 
 use crate::biome::{BiomeMaps, ElevationBand, Feature, Terrain};
 use crate::elevation::ElevationMaps;
+use crate::grid::Grid;
 use crate::hydrology::HydrologyMaps;
 
 const RIVER_COLOR: [u8; 3] = [50, 110, 200];
@@ -33,7 +34,12 @@ pub fn biome_map(
                     let depth = 1.0 - *elevation.elevation.get(pos.0, pos.1);
                     color = blend(color, [4, 10, 40], depth * 0.6);
                 }
-                Terrain::Coast | Terrain::Lake => {}
+                Terrain::Coast => {
+                    if let Some(feature) = biome.feature.get(pos.0, pos.1).0 {
+                        color = blend(color, feature_color(feature), 0.6);
+                    }
+                }
+                Terrain::Lake | Terrain::Ice => {}
                 _ => {
                     color = shade_for_band(color, band);
                     if let Some(feature) = biome.feature.get(pos.0, pos.1).0 {
@@ -84,23 +90,79 @@ pub fn legend() -> Vec<(&'static str, [u8; 3])> {
     vec![
         ("Ocean", terrain_color(Terrain::Ocean)),
         ("Coast", terrain_color(Terrain::Coast)),
+        ("Ice", terrain_color(Terrain::Ice)),
         ("Lake", terrain_color(Terrain::Lake)),
         ("Grassland", terrain_color(Terrain::Grassland)),
         ("Plains", terrain_color(Terrain::Plains)),
+        ("Savanna", terrain_color(Terrain::Savanna)),
+        ("Steppe", terrain_color(Terrain::Steppe)),
         ("Desert", terrain_color(Terrain::Desert)),
         ("Tundra", terrain_color(Terrain::Tundra)),
         ("Snow", terrain_color(Terrain::Snow)),
         ("Forest", feature_color(Feature::Forest)),
         ("Jungle", feature_color(Feature::Jungle)),
         ("Marsh", feature_color(Feature::Marsh)),
+        ("Floodplains", feature_color(Feature::Floodplains)),
+        ("Reef", feature_color(Feature::Reef)),
+        ("Volcano", feature_color(Feature::Volcano)),
+        ("Oasis", feature_color(Feature::Oasis)),
         ("River", RIVER_COLOR),
         ("Nation", [255, 255, 255]),
     ]
 }
 
+/// Renders each distinct landmass (from `stats::label_landmasses`) in its
+/// own flat, distinct color, with ocean/lake/ice/coast and any speck too
+/// small to count as a landmass all rendered as one dark "sea" color — a
+/// verification view, independent of biome coloring, for checking the
+/// actual continent count and how cleanly separated they are at a glance.
+pub fn highlight_landmasses(width: usize, height: usize, labels: &Grid<i32>) -> RgbImage {
+    let mut image: RgbImage = ImageBuffer::new(width as u32, height as u32);
+    for y in 0..height {
+        for x in 0..width {
+            let id = *labels.get(x as i64, y as i64);
+            let color = if id < 0 {
+                [8, 16, 40]
+            } else {
+                landmass_color(id as u32)
+            };
+            image.put_pixel(x as u32, y as u32, Rgb(color));
+        }
+    }
+    image
+}
+
+/// A distinct, readable color per landmass id via golden-angle hue rotation
+/// — successive ids land far apart on the color wheel, so even a map with
+/// dozens of landmasses never puts two similar hues next to each other.
+fn landmass_color(id: u32) -> [u8; 3] {
+    let hue = (id as f32 * 137.50777) % 360.0;
+    hsv_to_rgb(hue, 0.55, 0.85)
+}
+
+fn hsv_to_rgb(h: f32, s: f32, v: f32) -> [u8; 3] {
+    let c = v * s;
+    let x = c * (1.0 - ((h / 60.0) % 2.0 - 1.0).abs());
+    let m = v - c;
+    let (r1, g1, b1) = match (h / 60.0) as u32 {
+        0 => (c, x, 0.0),
+        1 => (x, c, 0.0),
+        2 => (0.0, c, x),
+        3 => (0.0, x, c),
+        4 => (x, 0.0, c),
+        _ => (c, 0.0, x),
+    };
+    [
+        ((r1 + m) * 255.0) as u8,
+        ((g1 + m) * 255.0) as u8,
+        ((b1 + m) * 255.0) as u8,
+    ]
+}
+
 /// The raw heightmap as grayscale — useful for sanity-checking generation
 /// parameters (continent shapes, mountain belts) independent of biome
-/// classification.
+/// classification. See [`elevation_hypsometric`] for a more readable,
+/// color-graded version.
 pub fn elevation_grayscale(width: usize, height: usize, elevation: &ElevationMaps) -> RgbImage {
     let mut image: RgbImage = ImageBuffer::new(width as u32, height as u32);
     for y in 0..height {
@@ -113,13 +175,53 @@ pub fn elevation_grayscale(width: usize, height: usize, elevation: &ElevationMap
     image
 }
 
+/// A topographic-map-style ("hypsometric tint") rendering of the raw
+/// heightmap: deep blue → shallow blue below `sea_level`, green → yellow →
+/// brown → white above it. Much easier to read verticality from than flat
+/// grayscale — the whole point of this view.
+pub fn elevation_hypsometric(
+    width: usize,
+    height: usize,
+    elevation: &ElevationMaps,
+    sea_level: f32,
+) -> RgbImage {
+    let mut image: RgbImage = ImageBuffer::new(width as u32, height as u32);
+    for y in 0..height {
+        for x in 0..width {
+            let h = *elevation.elevation.get(x as i64, y as i64);
+            image.put_pixel(x as u32, y as u32, Rgb(hypsometric_color(h, sea_level)));
+        }
+    }
+    image
+}
+
+fn hypsometric_color(elevation: f32, sea_level: f32) -> [u8; 3] {
+    if elevation < sea_level {
+        let t = (elevation / sea_level.max(0.001)).clamp(0.0, 1.0);
+        blend([6, 14, 60], [130, 180, 220], t)
+    } else {
+        let land_span = (1.2 - sea_level).max(0.05);
+        let t = ((elevation - sea_level) / land_span).clamp(0.0, 1.0);
+        if t < 0.35 {
+            blend([60, 120, 55], [190, 180, 90], t / 0.35)
+        } else if t < 0.7 {
+            blend([190, 180, 90], [130, 90, 60], (t - 0.35) / 0.35)
+        } else {
+            blend([130, 90, 60], [250, 250, 250], (t - 0.7) / 0.3)
+        }
+    }
+}
+
 fn terrain_color(terrain: Terrain) -> [u8; 3] {
     match terrain {
         Terrain::Ocean => [20, 60, 130],
         Terrain::Coast => [70, 130, 190],
+        Terrain::Ice => [210, 230, 240],
         Terrain::Lake => [60, 120, 190],
         Terrain::Grassland => [90, 150, 60],
         Terrain::Plains => [190, 175, 90],
+        Terrain::Savanna => [175, 165, 75],
+        Terrain::Steppe => [195, 185, 140],
         Terrain::Desert => [225, 200, 130],
         Terrain::Tundra => [150, 160, 140],
         Terrain::Snow => [240, 240, 245],
@@ -131,6 +233,10 @@ fn feature_color(feature: Feature) -> [u8; 3] {
         Feature::Forest => [30, 90, 35],
         Feature::Jungle => [15, 100, 40],
         Feature::Marsh => [70, 100, 60],
+        Feature::Volcano => [180, 40, 20],
+        Feature::Oasis => [50, 180, 160],
+        Feature::Floodplains => [140, 160, 80],
+        Feature::Reef => [230, 170, 140],
     }
 }
 
