@@ -13,7 +13,11 @@ pub(crate) enum MainMenuScreen {
     Root,
     PlayMode,
     SoloMode,
-    WorldGen,
+    /// The New Game setup screen — a tab bar (`new_game_menu::NewGameTab`:
+    /// World / Players) over a shared content area, not a single screen
+    /// despite the name surviving from when it was just the world-gen
+    /// preview.
+    NewGame,
 }
 
 /// Root of the main menu UI tree; despawned (with all children) on exit.

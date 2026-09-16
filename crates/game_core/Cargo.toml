@@ -5,3 +5,7 @@ edition.workspace = true
 
 [dependencies]
 bevy = { workspace = true }
+# `game_worldgen` has no bevy dependency of its own (pure computation), so
+# depending on it here doesn't compromise game_core's "zero rendering deps"
+# (see the crate doc comment) — it's sim/world data, not a renderer.
+game_worldgen = { path = "../game_worldgen" }

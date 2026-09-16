@@ -2,9 +2,10 @@ use bevy::asset::RenderAssetUsages;
 use bevy::image::Image;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
+use bevy::tasks::{AsyncComputeTaskPool, Task, block_on, poll_once};
 use game_worldgen::{generate, image_export, nations, preset, stats};
 
-use crate::main_menu::MainMenuScreen;
+use crate::new_game_menu::{NewGameContentArea, NewGameTab};
 use crate::widgets::{BACKGROUND, NORMAL_BUTTON, button_node, stepper_button_node};
 
 const PREVIEW_WIDTH: f32 = 560.0;
@@ -14,13 +15,30 @@ const CONTINENTS_RANGE: (u32, u32) = (1, 60);
 const NATIONS_RANGE: (u32, u32) = (1, 32);
 const SEA_LEVEL_RANGE: (f32, f32) = (0.30, 0.70);
 const BIAS_RANGE: (f32, f32) = (-0.30, 0.30);
-/// Resolution stepper range (map width in pixels; height is always half —
-/// see `WorldGenSettings::dimensions`). This changes image detail only, not
-/// how much "world" there is — that's what Continents/Nations/etc. control.
-/// 2048x1024 generates in ~1.75s (measured via the CLI); 3072x1536 takes
-/// ~4.7s, noticeable enough as a per-click UI freeze that 2048 is the cap.
-const RESOLUTION_RANGE: (u32, u32) = (128, 2048);
+/// "Size" stepper range — the world's actual quad grid width (height is
+/// always half, see `WorldGenSettings::dimensions`), at
+/// `preset::METERS_PER_QUAD` meters per quad. This is what `new_game_menu`'s
+/// Start button regenerates at and builds the real in-game terrain from —
+/// but *not* what the live preview here renders (see `PREVIEW_RESOLUTION`):
+/// changing Size doesn't touch the preview image at all, on purpose.
+/// Regenerating the *preview* at Size's own resolution on every tweak was
+/// tried first and felt actively broken — a giant preview world doesn't
+/// look any different in a small fixed-size `ImageNode` box (same macro
+/// shape, just finer noise detail you can't see at that scale), so a real,
+/// possibly multi-second-plus regeneration for zero visible change read as
+/// a bug. The cap here (8192, ~16km) is still generous, and there's no hard
+/// technical ceiling above it — Start's regeneration just gets slower, which
+/// is what `loading_menu`'s progress screen is for. Reaching thousands of
+/// quads wide with the terrain still smooth to fly around in-game needs
+/// actual chunked LOD too (only flat frustum-culled chunking exists today,
+/// see `game_render::map`), not just "allow a bigger number here."
+const RESOLUTION_RANGE: (u32, u32) = (128, 8192);
 const RESOLUTION_STEP: u32 = 128;
+
+/// The interactive preview always generates at this fixed size, regardless
+/// of `WorldGenSettings::dimensions()` ("Size") — see `RESOLUTION_RANGE`'s
+/// doc comment for why the two are deliberately decoupled.
+const PREVIEW_RESOLUTION: (usize, usize) = (512, 256);
 
 const ZOOM_RANGE: (f32, f32) = (1.0, 6.0);
 const ZOOM_STEP: f32 = 0.5;
@@ -28,6 +46,55 @@ const ZOOM_STEP: f32 = 0.5;
 /// zoom level, so panning feels the same speed regardless of how zoomed in
 /// the preview currently is.
 const PAN_STEP: f32 = 48.0;
+
+/// Result of a background `generate_image` run — see `PendingGeneration`.
+struct GenerationOutcome {
+    image: Image,
+    actual_continents: usize,
+}
+
+/// A `generate_image` run in flight on `AsyncComputeTaskPool`, polled once a
+/// frame by `poll_generation`. Regenerating used to happen synchronously,
+/// inline in `button_actions`, blocking the whole app for as long as
+/// `game_worldgen::generate` took — fine at the old 2048-wide cap
+/// (~1.75s), but `Size` now goes up to 8192 (see `RESOLUTION_RANGE`), and a
+/// multi-second *frozen, unresponsive* UI on every single stepper click
+/// reads as "this is broken," not "this is slow." Running it on the compute
+/// task pool instead keeps the UI responsive — clicking around while a
+/// large regeneration is in flight just means the preview updates a bit
+/// late, not that input stops being read at all. A new settings change
+/// before the previous task finishes simply replaces it here, which drops
+/// (cancels) the stale one.
+#[derive(Resource, Default)]
+struct PendingGeneration(Option<Task<GenerationOutcome>>);
+
+fn spawn_generation_task(mut settings: WorldGenSettings, pending: &mut PendingGeneration) {
+    let pool = AsyncComputeTaskPool::get();
+    pending.0 = Some(pool.spawn(async move {
+        let image = generate_image(&mut settings);
+        GenerationOutcome {
+            image,
+            actual_continents: settings.actual_continents,
+        }
+    }));
+}
+
+/// A small flat-gray placeholder so the preview `ImageNode` always has
+/// *something* to display the instant the screen spawns, before the first
+/// background generation finishes.
+fn placeholder_image() -> Image {
+    Image::new_fill(
+        Extent3d {
+            width: 1,
+            height: 1,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        &[30, 30, 35, 255],
+        TextureFormat::Rgba8UnormSrgb,
+        RenderAssetUsages::default(),
+    )
+}
 
 /// Preview pan/zoom state — a transform on top of the already-generated
 /// preview image, not something that triggers regeneration. Kept as its own
@@ -67,7 +134,7 @@ impl PreviewZoom {
 /// screen (it's a normal resource, not reset by `OnEnter`), so navigating
 /// Back and returning to World Gen doesn't lose your settings.
 #[derive(Resource, Clone, Copy)]
-struct WorldGenSettings {
+pub(crate) struct WorldGenSettings {
     preset_index: usize,
     resolution: u32,
     continent_count: u32,
@@ -139,8 +206,15 @@ impl Default for WorldGenSettings {
 }
 
 impl WorldGenSettings {
-    fn dimensions(&self) -> (usize, usize) {
+    pub(crate) fn dimensions(&self) -> (usize, usize) {
         (self.resolution as usize, (self.resolution / 2) as usize)
+    }
+
+    /// The seed this preview was generated with — `new_game_menu`'s Start
+    /// button reuses it (with `effective_preset`) so the actual in-game
+    /// terrain matches what was last shown in the preview.
+    pub(crate) fn seed(&self) -> u64 {
+        self.seed
     }
 
     /// Loads the selected preset's own values into the individually-tunable
@@ -161,7 +235,7 @@ impl WorldGenSettings {
     /// Builds the actual `Preset` this generation run uses: the chosen
     /// preset's "flavor" (mountains, rivers, octaves) with this screen's
     /// directly-controlled knobs layered on top.
-    fn effective_preset(&self) -> preset::Preset {
+    pub(crate) fn effective_preset(&self) -> preset::Preset {
         let mut effective = preset::ALL[self.preset_index];
         effective.continent_count = self.continent_count;
         effective.sea_level = self.sea_level;
@@ -233,47 +307,55 @@ enum WorldGenButton {
     PanUp,
     PanDown,
     ResetView,
-    Back,
 }
 
 pub(crate) fn plugin(app: &mut App) {
     app.init_resource::<WorldGenSettings>()
         .init_resource::<PreviewZoom>()
-        .add_systems(OnEnter(MainMenuScreen::WorldGen), spawn_screen)
-        .add_systems(OnExit(MainMenuScreen::WorldGen), despawn_screen)
+        .init_resource::<PendingGeneration>()
+        .add_systems(OnEnter(NewGameTab::World), spawn_screen)
+        .add_systems(OnExit(NewGameTab::World), despawn_screen)
         .add_systems(
             Update,
-            button_actions.run_if(in_state(MainMenuScreen::WorldGen)),
+            (button_actions, poll_generation).run_if(in_state(NewGameTab::World)),
         );
 }
 
 fn spawn_screen(
     mut commands: Commands,
-    mut settings: ResMut<WorldGenSettings>,
+    settings: Res<WorldGenSettings>,
     zoom: Res<PreviewZoom>,
     mut images: ResMut<Assets<Image>>,
+    mut pending: ResMut<PendingGeneration>,
+    content_area: Query<Entity, With<NewGameContentArea>>,
 ) {
-    let handle = images.add(generate_image(&mut settings));
+    let Ok(area) = content_area.single() else {
+        return;
+    };
+    let handle = images.add(placeholder_image());
+    spawn_generation_task(*settings, &mut pending);
 
-    commands
-        .spawn((
-            WorldGenRoot,
-            Node {
-                width: Val::Percent(100.0),
-                height: Val::Percent(100.0),
-                flex_direction: FlexDirection::Row,
-                align_items: AlignItems::Center,
-                justify_content: JustifyContent::Center,
-                column_gap: Val::Px(24.0),
-                ..default()
-            },
-            BackgroundColor(BACKGROUND),
-        ))
-        .with_children(|parent| {
-            spawn_settings_column(parent, &settings);
-            spawn_preview_column(parent, handle, &zoom);
-            spawn_legend_column(parent);
-        });
+    commands.entity(area).with_children(|parent| {
+        parent
+            .spawn((
+                WorldGenRoot,
+                Node {
+                    width: Val::Percent(100.0),
+                    height: Val::Percent(100.0),
+                    flex_direction: FlexDirection::Row,
+                    align_items: AlignItems::Center,
+                    justify_content: JustifyContent::Center,
+                    column_gap: Val::Px(24.0),
+                    ..default()
+                },
+                BackgroundColor(BACKGROUND),
+            ))
+            .with_children(|parent| {
+                spawn_settings_column(parent, &settings);
+                spawn_preview_column(parent, handle, &zoom);
+                spawn_legend_column(parent);
+            });
+    });
 }
 
 /// The preview image, clipped to a fixed-size viewport with a zoom/pan
@@ -424,7 +506,7 @@ fn spawn_settings_column(parent: &mut ChildSpawnerCommands, settings: &WorldGenS
             );
             spawn_row(
                 column,
-                "Resolution",
+                "Size",
                 LabelKind::Resolution,
                 resolution_text(settings),
                 WorldGenButton::ResolutionDec,
@@ -487,15 +569,6 @@ fn spawn_settings_column(parent: &mut ChildSpawnerCommands, settings: &WorldGenS
                     BackgroundColor(NORMAL_BUTTON),
                 ))
                 .with_child((Text::new("Randomize Seed"), TextFont::from_font_size(18.0)));
-
-            column
-                .spawn((
-                    Button,
-                    WorldGenButton::Back,
-                    button_node(),
-                    BackgroundColor(NORMAL_BUTTON),
-                ))
-                .with_child((Text::new("Back"), TextFont::from_font_size(18.0)));
         });
 }
 
@@ -587,7 +660,8 @@ fn spawn_row(
 
 fn resolution_text(settings: &WorldGenSettings) -> String {
     let (width, height) = settings.dimensions();
-    format!("{width}x{height}")
+    let km_wide = width as f32 * preset::METERS_PER_QUAD / 1000.0;
+    format!("{width}x{height} (~{km_wide:.1}km)")
 }
 
 fn continents_text(settings: &WorldGenSettings) -> String {
@@ -619,14 +693,18 @@ fn button_actions(
     buttons: Query<(&Interaction, &WorldGenButton), Changed<Interaction>>,
     mut settings: ResMut<WorldGenSettings>,
     mut zoom: ResMut<PreviewZoom>,
+    mut pending: ResMut<PendingGeneration>,
     mut labels: Query<(&mut Text, &ValueLabel), Without<ZoomLabel>>,
     mut zoom_label: Query<&mut Text, (With<ZoomLabel>, Without<ValueLabel>)>,
-    mut images: ResMut<Assets<Image>>,
-    mut preview: Query<(&mut ImageNode, &mut Node), With<PreviewImage>>,
-    mut next_screen: ResMut<NextState<MainMenuScreen>>,
+    mut preview: Query<&mut Node, With<PreviewImage>>,
 ) {
     let mut changed = false;
     let mut view_changed = false;
+    // Size (Resolution) is its own flag, not `changed`: it doesn't affect
+    // the preview at all (see `RESOLUTION_RANGE`'s doc comment), so it
+    // shouldn't trigger a `spawn_generation_task` regeneration — just its
+    // own label text, which does need to reflect the new value.
+    let mut size_changed = false;
 
     for (interaction, action) in &buttons {
         if *interaction != Interaction::Pressed {
@@ -693,12 +771,12 @@ fn button_actions(
             WorldGenButton::ResolutionDec => {
                 settings.resolution =
                     (settings.resolution.saturating_sub(RESOLUTION_STEP)).max(RESOLUTION_RANGE.0);
-                changed = true;
+                size_changed = true;
             }
             WorldGenButton::ResolutionInc => {
                 settings.resolution =
                     (settings.resolution + RESOLUTION_STEP).min(RESOLUTION_RANGE.1);
-                changed = true;
+                size_changed = true;
             }
             WorldGenButton::ContinentsDec => {
                 settings.continent_count = settings
@@ -761,7 +839,6 @@ fn button_actions(
                     .wrapping_add(1442695040888963407);
                 changed = true;
             }
-            WorldGenButton::Back => next_screen.set(MainMenuScreen::SoloMode),
         }
     }
 
@@ -769,7 +846,7 @@ fn button_actions(
         if let Ok(mut text) = zoom_label.single_mut() {
             text.0 = zoom_text(&zoom);
         }
-        if let Ok((_, mut node)) = preview.single_mut() {
+        if let Ok(mut node) = preview.single_mut() {
             node.width = Val::Px(PREVIEW_WIDTH * zoom.zoom);
             node.height = Val::Px(PREVIEW_HEIGHT * zoom.zoom);
             node.left = Val::Px(zoom.pan.x);
@@ -777,14 +854,46 @@ fn button_actions(
         }
     }
 
-    if !changed {
+    if !changed && !size_changed {
         return;
     }
 
-    if let Ok((mut image_node, _)) = preview.single_mut() {
-        image_node.image = images.add(generate_image(&mut settings));
+    // Labels not derived from generation results (Continents' "~N" count
+    // keeps showing the previous run's number until `poll_generation`
+    // applies the new one) update immediately; the image itself only
+    // updates once the background run finishes, and Size changing doesn't
+    // touch it at all (see `RESOLUTION_RANGE`'s doc comment).
+    for (mut text, label) in &mut labels {
+        text.0 = label_text(&settings, label.0);
     }
+    if changed {
+        spawn_generation_task(*settings, &mut pending);
+    }
+}
 
+/// Applies whatever background `generate_image` run (see `PendingGeneration`)
+/// has finished by this frame — the image swap and the `Continents` label's
+/// actual-count text both only happen here, since both depend on results
+/// that aren't known until the run completes.
+fn poll_generation(
+    mut pending: ResMut<PendingGeneration>,
+    mut settings: ResMut<WorldGenSettings>,
+    mut images: ResMut<Assets<Image>>,
+    mut preview: Query<&mut ImageNode, With<PreviewImage>>,
+    mut labels: Query<(&mut Text, &ValueLabel)>,
+) {
+    let Some(task) = pending.0.as_mut() else {
+        return;
+    };
+    let Some(outcome) = block_on(poll_once(task)) else {
+        return;
+    };
+    pending.0 = None;
+
+    settings.actual_continents = outcome.actual_continents;
+    if let Ok(mut image_node) = preview.single_mut() {
+        image_node.image = images.add(outcome.image);
+    }
     for (mut text, label) in &mut labels {
         text.0 = label_text(&settings, label.0);
     }
@@ -809,10 +918,12 @@ fn label_text(settings: &WorldGenSettings, kind: LabelKind) -> String {
 /// Generates the world, updates `settings.actual_continents` from it (see
 /// `WorldGenSettings::actual_continents`), and returns the rendered preview
 /// for whichever view is currently selected — the world itself is generated
-/// once either way, only the final rendering differs.
+/// once either way, only the final rendering differs. Always at
+/// `PREVIEW_RESOLUTION`, regardless of `settings.dimensions()` ("Size") —
+/// see `RESOLUTION_RANGE`'s doc comment for why.
 fn generate_image(settings: &mut WorldGenSettings) -> Image {
     let effective_preset = settings.effective_preset();
-    let (width, height) = settings.dimensions();
+    let (width, height) = PREVIEW_RESOLUTION;
 
     let world = generate(width, height, settings.seed, &effective_preset);
 

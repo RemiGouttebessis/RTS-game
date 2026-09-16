@@ -1,3 +1,12 @@
+/// Real-world size of one grid cell — the fact that turns a `width`×`height`
+/// grid into an actual map size (`width * METERS_PER_QUAD` meters east-west).
+/// Lives here rather than in `game_render` because it's a property of the
+/// *world*, not of how it's rendered: `game_ui::worldgen_menu`'s Size
+/// stepper uses it to show the chosen grid width in km, and
+/// `game_render::map` uses it as the terrain mesh's horizontal quad
+/// spacing — both need the same number.
+pub const METERS_PER_QUAD: f32 = 2.0;
+
 /// Tunable knobs for [`crate::generate`]. Named presets below are just
 /// different values for these — add a preset by adding a `const`, not by
 /// branching generation logic on a preset enum.

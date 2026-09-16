@@ -6,6 +6,13 @@ use bevy::prelude::*;
 pub enum GameState {
     #[default]
     MainMenu,
+    /// Between pressing Start and actually playing: world generation
+    /// (`game_ui::new_game_menu`, on `AsyncComputeTaskPool`) and terrain
+    /// mesh building (`game_render::map`, a few chunks per frame) both run
+    /// while here, with `game_ui::loading_menu` showing their progress via
+    /// `GeneratedWorld`/`TerrainBuildProgress`. Whoever finishes the mesh
+    /// building is what actually sets `GameState::InGame`.
+    Loading,
     InGame,
 }
 

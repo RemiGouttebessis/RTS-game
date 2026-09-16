@@ -212,7 +212,14 @@ fn hypsometric_color(elevation: f32, sea_level: f32) -> [u8; 3] {
     }
 }
 
-fn terrain_color(terrain: Terrain) -> [u8; 3] {
+/// Flat per-`Terrain` color, with none of `biome_map`'s baked-in shading
+/// (elevation-band darkening, feature/river blending, ocean depth tint).
+/// `biome_map` uses this as its base color before layering those on; a 3D
+/// terrain mesh wants the flat version instead — that extra shading was
+/// tuned to read well in a static top-down image, not to sit under real
+/// mesh lighting/normals, and baked-in depth shading in particular fights
+/// `game_render::map`'s own flat-clipped ocean floor.
+pub fn terrain_color(terrain: Terrain) -> [u8; 3] {
     match terrain {
         Terrain::Ocean => [20, 60, 130],
         Terrain::Coast => [70, 130, 190],

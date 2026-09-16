@@ -2698,6 +2698,8 @@ name = "game_assets"
 version = "0.1.0"
 dependencies = [
  "bevy",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -2715,6 +2717,7 @@ name = "game_core"
 version = "0.1.0"
 dependencies = [
  "bevy",
+ "game_worldgen",
 ]
 
 [[package]]
@@ -2740,6 +2743,8 @@ dependencies = [
  "game_config",
  "game_core",
  "game_input",
+ "game_worldgen",
+ "image",
 ]
 
 [[package]]
@@ -2762,6 +2767,7 @@ name = "game_ui"
 version = "0.1.0"
 dependencies = [
  "bevy",
+ "game_assets",
  "game_config",
  "game_core",
  "game_input",

@@ -5,6 +5,7 @@ edition.workspace = true
 
 [dependencies]
 bevy = { workspace = true }
+game_assets = { path = "../game_assets" }
 game_config = { path = "../game_config" }
 game_core = { path = "../game_core" }
 game_input = { path = "../game_input" }

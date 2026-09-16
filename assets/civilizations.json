@@ -1,0 +1,10 @@
+[
+  { "name": "Ardenmoor", "color": [90, 150, 60] },
+  { "name": "Kaelthar", "color": [190, 90, 70] },
+  { "name": "Suncrest", "color": [210, 170, 60] },
+  { "name": "Frosthold", "color": [140, 180, 210] },
+  { "name": "Verdant Accord", "color": [70, 170, 110] },
+  { "name": "Emberreach", "color": [220, 110, 40] },
+  { "name": "Tidewatch", "color": [60, 120, 190] },
+  { "name": "Stonemark", "color": [150, 140, 130] }
+]

@@ -8,3 +8,8 @@ bevy = { workspace = true }
 game_config = { path = "../game_config" }
 game_core = { path = "../game_core" }
 game_input = { path = "../game_input" }
+game_worldgen = { path = "../game_worldgen" }
+# Matches game_worldgen's/game_ui's own dependency spec — needed here to
+# read the RgbImage `image_export::biome_map` returns (pixel iteration) when
+# building the world-map overview texture.
+image = { version = "0.25", default-features = false, features = ["png"] }

@@ -68,7 +68,7 @@ fn button_actions(
             continue;
         }
         match action {
-            SoloModeButton::New => next_screen.set(MainMenuScreen::WorldGen),
+            SoloModeButton::New => next_screen.set(MainMenuScreen::NewGame),
             SoloModeButton::Back => next_screen.set(MainMenuScreen::PlayMode),
         }
     }
