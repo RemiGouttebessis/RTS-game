@@ -7,7 +7,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 `rts-game` is a Rust Cargo workspace (edition 2024) using Bevy 0.19.1, following the crate layout in
 `rts-bevy-architecture-notes.md`. The `game` crate (`crates/game`, binary name `rts-game`) is a thin
 binary: it loads persisted settings via `game_config::load()` *before* the `App` is built (the graphics
-backend has to be known for `RenderPlugin`), builds `DefaultPlugins`, adds `MeshPickingPlugin` (compiled
+backend has to be known for `RenderPlugin`), builds `DefaultPlugins` — also overriding `AssetPlugin`'s
+`file_path` to `"../../assets"` (**required, not cosmetic**: Bevy's `AssetServer` resolves its base path
+from `CARGO_MANIFEST_DIR`, a compile-time env var set to *this crate's own* directory, `crates/game` —
+not the process's working directory the way `game_assets`' plain `std::fs::read_to_string
+("assets/civilizations.json")` does, which only "just works" because `cargo run` happens to be invoked
+from the workspace root by convention. Without this override, `asset_server.load(...)` 404s looking in
+`crates/game/assets/` instead of the one real `assets/` folder at the workspace root) — adds
+`MeshPickingPlugin` (compiled
 in by Bevy's default features but not added by `DefaultPlugins`) and a debug-only `DevDiagnosticsPlugin`
 (in-game perf overlay, hidden by default, `F3` to toggle: FPS, frame time, sim tick rate, entity count —
 see `crates/game/src/diagnostics/overlay.rs`), then wires in the library crates:
@@ -29,20 +36,44 @@ see `crates/game/src/diagnostics/overlay.rs`), then wires in the library crates:
 - `game_sim` — deterministic simulation on `FixedUpdate`: `MovementPlugin`, `CombatPlugin`,
   `PathfindingPlugin`, `OrdersPlugin`, ordered via the `SimSet` system set. All currently empty stubs — no
   sim logic has been implemented yet.
-- `game_render` — presentation: `CameraPlugin` (pan/zoom 3D camera, driven by `game_input` actions,
-  spawns at `Startup` but pan/zoom only run `in_state(GameState::InGame)`; zoom is smoothed — scroll
-  input updates a `CameraZoomTarget` resource instantly, `apply_smooth_zoom` eases the camera's actual
-  height toward it every frame via exponential smoothing, `1 - exp(-rate * dt)`, so the glide's speed
-  doesn't depend on frame rate the way a plain `lerp(.., dt * rate)` would; **pan speed scales with
-  that height too** — `pan_speed_scale` multiplies `CameraSettings::pan_speed` by
-  `sqrt(camera_height / min_height)`, since covering the same *screen* distance at a high, zoomed-out
-  camera means covering a lot more world than at `min_height`, and a flat pan speed reads as crawling
-  once zoomed out; `sqrt` rather than linear so that scaling (up to `max_height / min_height`, 120x by
-  default) doesn't make max-height panning uncontrollably fast. `CameraSettings::max_height` defaults
-  to 600 (was 60) specifically to be able to zoom out over a real, `preset::METERS_PER_QUAD`-scaled
-  world — **if you change `CameraSettings`' defaults, check `%APPDATA%/rts-game/config/settings.ron`
-  (or platform equivalent) for a stale persisted copy that will silently override them**, the way this
-  one already did once), `MapPlugin`/`UnitsPlugin`. `MapPlugin` builds **real, chunked heightmap
+- `game_render` — presentation: `CameraPlugin` — an **orbit rig**, not a camera whose `Transform` gets
+  poked directly. `CameraRig` (a `target: Vec3` ground point) is what panning actually moves, in the
+  XZ plane; `CameraZoomTarget` (what scroll input sets) eases into `CameraDistance` every frame
+  (`apply_smooth_zoom`, exponential smoothing — `1 - exp(-rate * dt)`, so the glide's speed doesn't
+  depend on frame rate the way a plain `lerp(.., dt * rate)` would); `apply_camera_transform` is the
+  *only* place any of that actually touches the camera entity, deriving both the `Transform`
+  (`target + spherical(distance, pitch)`, always `looking_at(target)`) and the
+  `PerspectiveProjection`'s `fov` from `distance` each frame. **Pitch and FOV both interpolate with
+  `zoom_fraction`** (`0.0` at `min_height` to `1.0` at `max_height`) — confirmed this matches Civ6's
+  actual camera (tilts more zoomed in close, flattens toward top-down zoomed out): `PITCH_CLOSE`
+  (~35°) → `PITCH_FAR` (~85°, not exactly vertical, to dodge `looking_at` gimbal issues) for tilt, and
+  `FOV_CLOSE` (45°, Bevy's own default) → `FOV_FAR` (~13°) for a flatter, more "orthographic" read
+  without the complexity/picking implications of actually switching `Projection` variants —
+  `MeshPickingPlugin`'s raycast doesn't care either way, but only because the projection stays
+  `Perspective` the whole time. **Pan speed scales with distance too** — `pan_speed_scale` multiplies
+  `CameraSettings::pan_speed` by `sqrt(distance / min_height)`, since covering the same *screen*
+  distance at a high, zoomed-out camera means covering a lot more world than at `min_height`, and a
+  flat pan speed reads as crawling once zoomed out; `sqrt` rather than linear so that scaling (up to
+  `max_height / min_height`, 120x by default) doesn't make max-distance panning uncontrollably fast.
+  `CameraSettings::max_height` defaults to 600 (was 60) specifically to be able to zoom out over a
+  real, `preset::METERS_PER_QUAD`-scaled world — **if you change `CameraSettings`' defaults, check
+  `%APPDATA%/rts-game/config/settings.ron` (or platform equivalent) for a stale persisted copy that
+  will silently override them**, the way this one already did once. `zoom_fraction` and
+  `CameraDistance` are `pub(crate)` specifically so `game_render::map::toggle_world_map` can use the
+  same number for its terrain/world-map crossover — it can't read `Transform.translation.y` for this
+  anymore now that pitch varies (that's `distance * pitch.sin()`, which shrinks as pitch flattens, not
+  distance itself). **The rig hovers a constant height above local ground, not a fixed `y = 0`
+  plane** — `GroundHeight` (smoothed via `follow_ground_height`, same exponential-smoothing pattern as
+  `apply_smooth_zoom`) samples `game_worldgen::image_export::visual_height` under
+  `CameraRig::target`'s `(x, z)` every frame (via the new `image_export::world_to_grid`, world-space →
+  grid-cell, wrap-x/clamp-y like `Grid::index`), and `apply_camera_transform`'s actual look-at point is
+  `(target.x, ground_height, target.z)`, not `target` itself. Without this, zooming in close over a
+  mountain put the camera's `y` (derived from `distance * pitch.sin()` around a fixed sea-level plane)
+  *below* the peak, clipping into the mesh — tracking real ground height fixes the common case.
+  **Known limitation, not fixed here**: this only samples height under the look-at *target*, not along
+  the line from the camera to it, so a camera very close to a steep cliff face between it and the
+  target could still clip in principle; a real fix needs a terrain raycast each frame. `MapPlugin`/
+  `UnitsPlugin`. `MapPlugin` builds **real, chunked heightmap
   terrain** from `game_core::GeneratedWorld`, but not on `OnEnter(GameState::InGame)` the way the
   placeholder ground plane used to — chunk meshes are built a handful at a time
   (`CHUNKS_PER_FRAME`, 8) every frame while `GameState::Loading`
@@ -57,26 +88,74 @@ see `crates/game/src/diagnostics/overlay.rs`), then wires in the library crates:
   (at its own fixed resolution) is still the same world/seed/preset, just built at its real size.
   **The grid is split into `CHUNK_QUADS`×`CHUNK_QUADS` (64) mesh entities** (`TerrainChunk`, adjacent
   chunks sharing their border vertices so there's no seam), not one giant mesh — Bevy's ordinary
-  per-entity frustum culling then skips whatever's off-screen, which is the *only* optimization in
-  place. There's no distance-based LOD (mesh decimation swapped in for far chunks) — pushing Size very
-  high still gets slow to fly around, just less catastrophically than an unculled single mesh; real
-  LOD is flagged as the next step, not attempted here. **Vertex color is flat per-`Terrain`**
-  (`image_export::terrain_color`, now `pub`, read directly from `world.biome.terrain`) — *not* sampled
-  from `image_export::biome_map`'s rendered PNG the way an earlier version did: that image bakes in
-  elevation-band darkening, feature/river blending and ocean-depth tint tuned for a static top-down
-  preview, none of which reads well as sparse per-vertex mesh color under real lighting. `biome_map`
-  is still used, just only for the `WorldMapPlane` overview texture (see below) — a literal flat
-  preview image, never the 3D mesh's own coloring. **Ocean/lake floors are flat-clipped**, not left to
-  follow the raw (often barely-below-sea-level, noisy) elevation underneath them: `cell_height`
-  returns one of three fixed depths (`OCEAN_FLOOR_DEPTH`/`COAST_FLOOR_DEPTH`/`LAKE_FLOOR_DEPTH`) for
-  water cells instead of `(elevation - sea_level) * HEIGHT_SCALE`, land's formula — a two-step
-  "continental shelf" (Coast shallower than open Ocean) rather than a jagged seabed.
-  **`HEIGHT_SCALE` (45, was 6) is a deliberately dramatic vertical exaggeration**, not a realistic
-  one — at `preset::METERS_PER_QUAD`'s 2m/quad horizontal scale, even a full elevation swing reads as
-  barely-there without one, the same stylized exaggeration every Civ-style/RTS terrain view relies on
-  for readability from a top-down camera; the flat water depths above were scaled up to match, so they
-  still sit comfortably below land's relief instead of poking through it. `Mesh::compute_smooth_normals()`
-  handles shading. **Terrain is teraformable**: each chunk carries a `TerrainChunk` component (mesh
+  per-entity frustum culling skips whatever's off-screen. **Real distance-based LOD exists now, on top
+  of that**: `build_terrain_incrementally` builds *two* meshes per chunk job via
+  `build_chunk_mesh(..., stride)` — full-res (`stride = 1`) and a decimated `LOD_STRIDE` (4) sibling
+  that samples every 4th grid cell (`sample_indices`, which also always keeps a region's own last
+  index even when `stride` doesn't evenly divide it, so a smaller-than-`CHUNK_QUADS` edge chunk's
+  decimated mesh still reaches its own far border). Both are tagged `VisibilityRange` (`use_aabb:
+  true` — with vertex positions baked as absolute world coordinates and the entity's own `Transform`
+  left identity, "mesh origin" would be world `(0,0,0)` for *every* chunk, so this has to be `Aabb`-
+  based to mean anything) and given the *literal same* `Aabb` (computed once, from the full-res mesh,
+  reused for its LOD sibling) — `VisibilityRange`'s own docs call out that smooth crossfading needs
+  every LOD tier positioned identically, and a decimated mesh's own min/max height can differ slightly
+  (it can skip a sampled peak), which would otherwise skew its `Aabb` center and the crossfade
+  boundary along with it. Full-res gets `start_margin: 0.0..0.0, end_margin: LOD_DISTANCE..LOD_DISTANCE
+  + LOD_MARGIN`; the decimated one the mirror image, `end_margin: f32::MAX..f32::MAX` — Bevy dithers
+  the crossfade over the margin automatically (`VisibilityRangePlugin`, already wired into Bevy's own
+  `bevy_camera::CameraPlugin`, no extra plugin registration needed here, unlike `MeshPickingPlugin`).
+  Only the full-res chunk keeps `TerrainChunk`/the `teraform` observer — the LOD sibling is a distant
+  visual stand-in, never the thing actually clicked on. This is what made raising `worldgen_menu`'s
+  default Size (512 → `DEFAULT_RESOLUTION`, 1024) reasonable — flying around a bigger world now has
+  *something* pulling triangle count down at distance, where before it didn't. **Height and color both
+  come from
+  `game_worldgen::image_export`** now (`visual_height`/`terrain_paint_color`), not from
+  `game_render`-local logic — moved so `game_worldgen`'s own CLI (`--paint`, see its entry below) can
+  render the *exact* thing the 3D mesh will show, as a 2D PNG, which is otherwise the only
+  non-interactive way to check any of this (no way to click through the live game here). `visual_height`
+  is a **deliberately dramatic vertical exaggeration**, not a realistic one, boosted further wherever
+  `ElevationMaps::mountain_mask` (already computed, independent of raw elevation) says a cell is
+  rugged — `preset::HEIGHT_SCALE * (1 + mountain_mask * MOUNTAIN_HEIGHT_BOOST)` — so mountains read as
+  dramatically tall while flat land stays modest, instead of one uniform multiplier scaling the whole
+  map the same amount (still too subtle even at a high flat `HEIGHT_SCALE`, per an earlier attempt).
+  **Ocean floors stay flat-clipped** (`COAST_FLOOR_DEPTH`/`OCEAN_FLOOR_DEPTH`, Coast shallower than
+  open Ocean — a two-step "continental shelf" rather than a jagged seabed) but **lakes are not** —
+  `HydrologyMaps::filled` (the priority-flood pass's basin pour-point elevation, previously computed
+  and discarded) gives each lake its own correct natural water level instead of one fixed depth, since
+  that was already the right answer and clipping it was actively wrong. `terrain_paint_color` adds,
+  purely at render time (never touching `Terrain` classification, which `nations::place` and future
+  `game_sim` code still read as-is): a **slope-based rock blend** (steepness from `visual_height`'s
+  gradient over 4 neighbors, so a "Plains" cell on a cliff still gets painted like a cliff), a
+  **beach blend** (land within `BEACH_ELEVATION_BAND` of `sea_level` *and* adjacent to water — a cliff
+  dropping into the sea is well outside that band and correctly gets no beach), and a **3×3
+  neighbor-averaged base color** (`blended_land_color`) so adjacent biomes fade into each other
+  instead of meeting at a hard flat-color edge. `image_export::biome_map` (the un-blended, un-sloped,
+  un-beached original) is now used *only* for the 2D preview and the `WorldMapPlane` overview texture
+  (see below) — genuinely just a preview, never the 3D mesh's own coloring, which is why it was safe
+  to leave untouched rather than growing it to cover both jobs. **The mesh now samples a real texture,
+  not just flat vertex color** — `terrain_paint_color` returns `(SurfaceClass, [u8; 3])` (the class is
+  new; `Water`/`Sand`/`Rock`/`Land`, decided by the exact same beach/rock threshold checks that already
+  picked the blend color, so the two can't disagree about which cells are beach/cliff/plain). `atlas_uv`
+  maps a cell's `SurfaceClass` plus its world-space `(x, z)` to a UV coordinate in one quadrant of
+  `TERRAIN_ATLAS_PATH` (`assets/textures/terrain/atlas.png` — a 2×2 composite of 4 CC0 tiles from
+  Kenney's "Retro Textures Fantasy" pack, license/source recorded in that folder's own `LICENSE.txt`),
+  tiling every `TILE_METERS` (4m) and inset `ATLAS_UV_INSET` from each quadrant's edge as cheap
+  insurance against sampling bleeding across it. Loaded once (`asset_server.load_builder().
+  with_settings(...).load(...)` — the `AssetServer::load_with_settings` shortcut is deprecated in this
+  Bevy version) with **nearest filtering + repeat addressing** (`ImageSamplerDescriptor::nearest()` +
+  `ImageAddressMode::Repeat`) for a crisp, tiling, pixel-art-styled look rather than a smoothed one; set
+  as the shared material's `base_color_texture`, still multiplied by the existing per-vertex
+  `Mesh::ATTRIBUTE_COLOR` (Bevy's PBR shader does base-color-texture × vertex-color × material
+  base-color), so all the biome/slope/beach coloring above still matters, just modulating a real
+  texture instead of a flat one. **Hard-edged class boundaries on purpose** — whichever `SurfaceClass`
+  a vertex has, its whole triangle samples that one quadrant; a soft cross-quadrant blend needs a
+  custom shader sampling multiple layers by per-vertex weight, real extra machinery flagged as the
+  natural next step, not attempted here. **Open-ocean chunks skip shadows**
+  (`NotShadowCaster`/`NotShadowReceiver`, from `bevy_light`/`bevy::light` — not `bevy_pbr`, despite
+  that being the more obvious-looking crate) — a chunk only gets them if `build_chunk_mesh` reports
+  every one of its cells is ocean/lake; a mixed coastal chunk keeps normal shadowing.
+  `Mesh::compute_smooth_normals()` handles shading. **Terrain is teraformable**: each chunk carries a
+  `TerrainChunk` component (mesh
   handle, its `col_start`/`row_start` offset into the world grid, and a CPU-side local `heights`
   cache) and an `.observe(teraform)` — left/right click (via `MeshPickingPlugin`, added once in
   `main.rs`; its `hit.position` is usable directly as world/mesh space since every chunk's own
@@ -86,9 +165,9 @@ see `crates/game/src/diagnostics/overlay.rs`), then wires in the library crates:
   brush near the edge of the chunk that was actually clicked just clips there — a known seam
   limitation of per-chunk mutation without cross-chunk brush support). **Zoom out far enough and the
   detailed chunks swap for a `WorldMapPlane`** — a flat plane textured with `biome_map`, spawned once
-  chunk building finishes, toggled by `Visibility` in `toggle_world_map` once the camera height
-  crosses `WORLD_MAP_ZOOM_FRACTION` (75%) of the way from `CameraSettings::min_height` to
-  `max_height`; one image swapped by visibility, not a continuous LOD transition. Fog of war, and
+  chunk building finishes, toggled by `Visibility` in `toggle_world_map` once `camera::zoom_fraction`
+  (see `CameraPlugin`'s entry above) crosses `WORLD_MAP_ZOOM_FRACTION` (75%); one image swapped by
+  visibility, not a continuous LOD transition. Fog of war, and
   dressing the terrain with trees/rocks/rivers (or shaders), are intentionally not part of any of this
   yet. `light`/unit-cube placeholders spawn on `OnEnter(GameState::Loading)`/`OnEnter(GameState::InGame)`
   respectively **and despawn on `OnExit(GameState::InGame)`** (everything shares the `MapEntity`
@@ -228,10 +307,21 @@ see `crates/game/src/diagnostics/overlay.rs`), then wires in the library crates:
   dependency** — pure computation, called from `game_ui::worldgen_menu` (Play → Solo → New) for the
   in-game preview screen, and also runnable standalone via `cargo run -p game_worldgen --example
   generate -- --preset continents --seed 42 --out world.png` (also takes `--continents`/`--sea-level`/
-  `--humidity`/`--temperature`/`--nations`, kept in sync with the UI's knobs) for faster
-  parameter-tuning iteration without the game UI. Output is an image either way (colored biome map,
-  or `image_export::elevation_hypsometric`'s topographic heightmap — `worldgen_menu`'s View toggle
-  switches between them), not mesh terrain yet — that conversion is future work.
+  `--humidity`/`--temperature`/`--nations`, kept in sync with the UI's knobs, plus `--paint` — see
+  below) for faster parameter-tuning iteration without the game UI, *and* as the only non-interactive
+  way to check anything `game_render::map` draws, since that needs an actual running game window to
+  see otherwise. Base output is an image either way (colored biome map, or
+  `image_export::elevation_hypsometric`'s topographic heightmap — `worldgen_menu`'s View toggle
+  switches between them); `--paint` additionally writes `<out>.paint.png` via
+  `image_export::terrain_paint_map`/`terrain_paint_color` — the exact per-cell height/color
+  `game_render::map` actually turns into the 3D terrain mesh (slope rock blend, beach blend,
+  biome-neighbor blend; see `game_render`'s entry), so tuning any of that math is "regenerate, look at
+  the PNG," not "launch the game and fly the camera around." (`terrain_paint_color` also returns a
+  `SurfaceClass` — `Water`/`Sand`/`Rock`/`Land` — alongside the color, which `--paint` itself ignores
+  but `game_render::map` uses to pick which quadrant of its texture atlas a vertex samples; see that
+  entry.) `image_export::world_to_grid` is the inverse of the mesh's own vertex-placement formula
+  (world-space `(x, z)` → nearest grid cell, wrap-x/clamp-y) — used by `game_render::camera` to sample
+  ground height under the camera's look-at point.
   **Continents are noise-shaped, then count-corrected — not a distance field.** A seed-point
   distance-field approach (grow each continent from one of `continent_count` well-spaced seeds) was
   tried first specifically to *guarantee* the exact count, and it worked — verified against targets

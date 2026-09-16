@@ -1,9 +1,11 @@
 use image::{ImageBuffer, Rgb, RgbImage};
 
+use crate::World;
 use crate::biome::{BiomeMaps, ElevationBand, Feature, Terrain};
 use crate::elevation::ElevationMaps;
 use crate::grid::Grid;
 use crate::hydrology::HydrologyMaps;
+use crate::preset;
 
 const RIVER_COLOR: [u8; 3] = [50, 110, 200];
 
@@ -55,6 +57,249 @@ pub fn biome_map(
         }
     }
 
+    image
+}
+
+/// Maps a world-space `(x, z)` position (meters, same convention
+/// `game_render::map::build_chunk_mesh` uses to place vertices: `x = (col -
+/// width/2) * METERS_PER_QUAD`, `z` likewise from `row`) back to the nearest
+/// grid cell — wrapping `col` (the cylinder wraps east-west) and clamping
+/// `row` (it doesn't wrap north-south), matching `Grid::index`'s own
+/// convention exactly so this always lands on a cell `Grid::get` would too.
+/// Used wherever something needs "what terrain is under this world
+/// position" for a single nearest cell (e.g. `game_render::camera`'s
+/// ground-following); doesn't fit `game_render::map`'s teraform brush, which
+/// needs continuous (non-rounded) col/row for its falloff math instead.
+pub fn world_to_grid(
+    world_width: usize,
+    world_height: usize,
+    world_x: f32,
+    world_z: f32,
+) -> (usize, usize) {
+    let col = (world_x / preset::METERS_PER_QUAD + world_width as f32 / 2.0).round() as i64;
+    let row = (world_z / preset::METERS_PER_QUAD + world_height as f32 / 2.0).round() as i64;
+    let col = col.rem_euclid(world_width as i64) as usize;
+    let row = row.clamp(0, world_height as i64 - 1) as usize;
+    (col, row)
+}
+
+/// Visual (mesh) height for one world cell: a flat-clipped depth for ocean
+/// (see `preset::COAST_FLOOR_DEPTH`/`OCEAN_FLOOR_DEPTH`), the basin's real
+/// pour-point elevation for a lake (`HydrologyMaps::filled`, not a fixed
+/// clip — see that field's doc comment), or scaled-and-mountain-boosted raw
+/// elevation for land (`preset::HEIGHT_SCALE`/`MOUNTAIN_HEIGHT_BOOST`).
+/// Shared by `game_render::map`'s actual mesh and this module's own slope
+/// math (`slope_at`) so the two can never disagree about how tall a cell
+/// reads.
+pub fn visual_height(world: &World, sea_level: f32, col: usize, row: usize) -> f32 {
+    let pos = (col as i64, row as i64);
+
+    if *world.hydrology.is_lake.get(pos.0, pos.1) {
+        let filled = *world.hydrology.filled.get(pos.0, pos.1);
+        return (filled - sea_level) * preset::HEIGHT_SCALE - preset::LAKE_SURFACE_OFFSET;
+    }
+    if *world.hydrology.is_ocean.get(pos.0, pos.1) {
+        let terrain = *world.biome.terrain.get(pos.0, pos.1);
+        return if terrain == Terrain::Coast {
+            -preset::COAST_FLOOR_DEPTH
+        } else {
+            -preset::OCEAN_FLOOR_DEPTH
+        };
+    }
+
+    let elevation = *world.elevation.elevation.get(pos.0, pos.1);
+    let mountain = *world.elevation.mountain_mask.get(pos.0, pos.1);
+    (elevation - sea_level)
+        * preset::HEIGHT_SCALE
+        * (1.0 + mountain * preset::MOUNTAIN_HEIGHT_BOOST)
+}
+
+/// Steepness at a cell, as an angle in radians from horizontal — the
+/// gradient of `visual_height` over its 4 immediate neighbors (wrap-aware in
+/// x, clamped at the poles in y, matching `Grid`'s own convention).
+fn slope_at(world: &World, sea_level: f32, col: usize, row: usize) -> f32 {
+    let width = world.width as i64;
+    let height = world.height as i64;
+    let c = col as i64;
+    let r = row as i64;
+
+    let west = (c - 1).rem_euclid(width) as usize;
+    let east = (c + 1).rem_euclid(width) as usize;
+    let north = (r - 1).clamp(0, height - 1) as usize;
+    let south = (r + 1).clamp(0, height - 1) as usize;
+
+    let h_west = visual_height(world, sea_level, west, row);
+    let h_east = visual_height(world, sea_level, east, row);
+    let h_north = visual_height(world, sea_level, col, north);
+    let h_south = visual_height(world, sea_level, col, south);
+
+    let dx = (h_east - h_west) / (2.0 * preset::METERS_PER_QUAD);
+    let dz = (h_south - h_north) / (2.0 * preset::METERS_PER_QUAD);
+    (dx * dx + dz * dz).sqrt().atan()
+}
+
+/// A land cell's color before slope/beach/neighbor blending — terrain +
+/// elevation-band darkening + feature blend, the same recipe `biome_map`
+/// uses for land, minus river blending (rivers are still a 2D-preview-only
+/// concept for now, not drawn into the 3D mesh).
+fn land_base_color(world: &World, col: usize, row: usize) -> [u8; 3] {
+    let pos = (col as i64, row as i64);
+    let terrain = *world.biome.terrain.get(pos.0, pos.1);
+    let band = *world.biome.elevation_band.get(pos.0, pos.1);
+    let mut color = shade_for_band(terrain_color(terrain), band);
+    if let Some(feature) = world.biome.feature.get(pos.0, pos.1).0 {
+        color = blend(color, feature_color(feature), 0.55);
+    }
+    color
+}
+
+const ROCK_COLOR: [u8; 3] = [112, 106, 100];
+/// Slope angle (radians) where rock starts blending in / is fully rock,
+/// ~30°/~55° — steep enough that "still Plains" stops looking plausible.
+const ROCK_SLOPE_START: f32 = 0.524;
+const ROCK_SLOPE_FULL: f32 = 0.960;
+
+const SAND_COLOR: [u8; 3] = [214, 199, 152];
+/// How close to `sea_level` (in the same normalized `0..1.2` elevation
+/// units) land still counts as "beach" — a cliff dropping straight into the
+/// ocean is well above this and correctly gets no beach. Wide enough to
+/// read as an actual beach band rather than a 1-pixel fringe at typical map
+/// resolutions.
+const BEACH_ELEVATION_BAND: f32 = 0.09;
+
+/// Which broad surface a cell reads as, for texturing purposes
+/// (`game_render::map`'s atlas UV selection) — a coarser, discrete cousin of
+/// `terrain_paint_color`'s continuous blend factors. Uses the exact same
+/// beach/rock threshold checks as that function (see `terrain_paint_color`'s
+/// body), just picking a hard winner instead of a blend weight, since a mesh
+/// vertex can only sample one atlas quadrant.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SurfaceClass {
+    Water,
+    Sand,
+    Rock,
+    Land,
+}
+
+/// A 3×3-neighbor-blended, slope/beach-aware land color — what
+/// `game_render::map` actually paints onto the terrain mesh, unlike
+/// `biome_map`'s flat per-cell rendering (still used for the 2D preview and
+/// `WorldMapPlane`, which really is just a preview and doesn't need any of
+/// this). Water cells (ocean/coast/lake/ice) skip all three effects and
+/// just return their flat `terrain_color` — slope/beach/blend are land
+/// concepts, and blending a lake edge toward its neighbors would just tint
+/// the water, not soften a biome boundary. Also returns the `SurfaceClass`
+/// that produced this color, for `game_render::map`'s atlas texture — the
+/// same beach/rock checks decide both, so the two can't disagree about which
+/// cells count as beach/cliff/plain land.
+pub fn terrain_paint_color(
+    world: &World,
+    sea_level: f32,
+    col: usize,
+    row: usize,
+) -> (SurfaceClass, [u8; 3]) {
+    let pos = (col as i64, row as i64);
+    if *world.hydrology.is_lake.get(pos.0, pos.1) || *world.hydrology.is_ocean.get(pos.0, pos.1) {
+        return (
+            SurfaceClass::Water,
+            terrain_color(*world.biome.terrain.get(pos.0, pos.1)),
+        );
+    }
+
+    let base = blended_land_color(world, col, row);
+
+    let elevation = *world.elevation.elevation.get(pos.0, pos.1);
+    let above_sea = elevation - sea_level;
+    if above_sea < BEACH_ELEVATION_BAND && near_water(world, col, row) {
+        let t = (1.0 - above_sea / BEACH_ELEVATION_BAND).clamp(0.0, 1.0);
+        return (SurfaceClass::Sand, blend(base, SAND_COLOR, t * 0.95));
+    }
+
+    let slope = slope_at(world, sea_level, col, row);
+    if slope > ROCK_SLOPE_START {
+        let t = ((slope - ROCK_SLOPE_START) / (ROCK_SLOPE_FULL - ROCK_SLOPE_START)).clamp(0.0, 1.0);
+        return (SurfaceClass::Rock, blend(base, ROCK_COLOR, t));
+    }
+
+    (SurfaceClass::Land, base)
+}
+
+/// Averages `land_base_color` over a cell's 3×3 neighborhood (falling back
+/// to the center cell's own color for any water neighbor, so a coastline
+/// doesn't get tinted by the ocean) — softens the hard edges between
+/// adjacent biomes into a gradient instead of a flat color boundary.
+fn blended_land_color(world: &World, col: usize, row: usize) -> [u8; 3] {
+    let width = world.width as i64;
+    let height = world.height as i64;
+    let c = col as i64;
+    let r = row as i64;
+    let center = land_base_color(world, col, row);
+
+    let mut sum = [0u32; 3];
+    let mut count = 0u32;
+    for dy in -1..=1 {
+        for dx in -1..=1 {
+            let nx = (c + dx).rem_euclid(width) as usize;
+            let ny = (r + dy).clamp(0, height - 1) as usize;
+            let npos = (nx as i64, ny as i64);
+            let is_water = *world.hydrology.is_lake.get(npos.0, npos.1)
+                || *world.hydrology.is_ocean.get(npos.0, npos.1);
+            let color = if is_water {
+                center
+            } else {
+                land_base_color(world, nx, ny)
+            };
+            sum[0] += color[0] as u32;
+            sum[1] += color[1] as u32;
+            sum[2] += color[2] as u32;
+            count += 1;
+        }
+    }
+
+    [
+        (sum[0] / count) as u8,
+        (sum[1] / count) as u8,
+        (sum[2] / count) as u8,
+    ]
+}
+
+/// Whether any of a land cell's 8 neighbors is ocean or lake — used only for
+/// the beach blend, which needs actual adjacency, not just "close to sea
+/// level" (an inland low point near `sea_level` isn't a beach).
+fn near_water(world: &World, col: usize, row: usize) -> bool {
+    let width = world.width as i64;
+    let height = world.height as i64;
+    let c = col as i64;
+    let r = row as i64;
+    for dy in -1..=1 {
+        for dx in -1..=1 {
+            if dx == 0 && dy == 0 {
+                continue;
+            }
+            let nx = (c + dx).rem_euclid(width);
+            let ny = (r + dy).clamp(0, height - 1);
+            if *world.hydrology.is_ocean.get(nx, ny) || *world.hydrology.is_lake.get(nx, ny) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Renders the world with the exact per-cell coloring `game_render::map`
+/// uses for the 3D terrain mesh (`terrain_paint_color`, cell by cell) — a
+/// verification view: what to actually look at to check slope/beach/blend
+/// math (via `cargo run -p game_worldgen --example generate -- --paint`)
+/// before any of it reaches the live 3D game, which isn't otherwise
+/// possible to eyeball non-interactively.
+pub fn terrain_paint_map(width: usize, height: usize, world: &World, sea_level: f32) -> RgbImage {
+    let mut image: RgbImage = ImageBuffer::new(width as u32, height as u32);
+    for y in 0..height {
+        for x in 0..width {
+            let (_, color) = terrain_paint_color(world, sea_level, x, y);
+            image.put_pixel(x as u32, y as u32, Rgb(color));
+        }
+    }
     image
 }
 

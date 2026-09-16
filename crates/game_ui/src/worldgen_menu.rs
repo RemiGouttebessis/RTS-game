@@ -28,12 +28,21 @@ const BIAS_RANGE: (f32, f32) = (-0.30, 0.30);
 /// possibly multi-second-plus regeneration for zero visible change read as
 /// a bug. The cap here (8192, ~16km) is still generous, and there's no hard
 /// technical ceiling above it — Start's regeneration just gets slower, which
-/// is what `loading_menu`'s progress screen is for. Reaching thousands of
-/// quads wide with the terrain still smooth to fly around in-game needs
-/// actual chunked LOD too (only flat frustum-culled chunking exists today,
-/// see `game_render::map`), not just "allow a bigger number here."
+/// is what `loading_menu`'s progress screen is for. `game_render::map` now
+/// builds a decimated LOD mesh alongside each chunk's full-res one
+/// (`VisibilityRange`-crossfaded by camera distance), so flying around a big
+/// world stays reasonably smooth without needing every quad rendered at
+/// full detail all the time — that's what makes a bigger *default* here
+/// reasonable now, where it wasn't before that existed.
 const RESOLUTION_RANGE: (u32, u32) = (128, 8192);
 const RESOLUTION_STEP: u32 = 128;
+/// Default "Size" — bumped from the old 512 now that `game_render::map` has
+/// real LOD (see `RESOLUTION_RANGE`'s doc comment); a bigger default world
+/// also means a correspondingly higher-resolution `WorldMapPlane` overview
+/// texture for free, since that's rendered at the world's own actual grid
+/// resolution (`game_render::map::build_world_map_image`), not a separate
+/// fixed size.
+const DEFAULT_RESOLUTION: u32 = 1024;
 
 /// The interactive preview always generates at this fixed size, regardless
 /// of `WorldGenSettings::dimensions()` ("Size") — see `RESOLUTION_RANGE`'s
@@ -188,7 +197,7 @@ impl Default for WorldGenSettings {
         let preset_index = 0;
         let mut settings = Self {
             preset_index,
-            resolution: 512,
+            resolution: DEFAULT_RESOLUTION,
             continent_count: 4,
             sea_level: 0.5,
             humidity: 0.0,

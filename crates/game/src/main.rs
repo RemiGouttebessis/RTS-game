@@ -1,3 +1,4 @@
+use bevy::asset::AssetPlugin;
 use bevy::picking::mesh_picking::MeshPickingPlugin;
 use bevy::prelude::*;
 use bevy::render::RenderPlugin;
@@ -46,6 +47,22 @@ fn main() {
                         backends: Some(backends),
                         ..default()
                     })),
+                    ..default()
+                })
+                .set(AssetPlugin {
+                    // Bevy's own asset base path is `CARGO_MANIFEST_DIR` (set
+                    // at compile time to *this* crate's own directory,
+                    // `crates/game`) in dev builds, not the process's current
+                    // working directory — unlike `game_assets`'s plain
+                    // `std::fs::read_to_string("assets/civilizations.json")`,
+                    // which resolves relative to whatever directory `cargo
+                    // run` was invoked from (the workspace root, by
+                    // convention here) and so "just worked" by coincidence.
+                    // Bevy's `AssetServer` needs an explicit relative path
+                    // back up to the one real `assets/` folder at the
+                    // workspace root instead, or every `asset_server.load(..)`
+                    // 404s looking in `crates/game/assets/` instead.
+                    file_path: "../../assets".to_string(),
                     ..default()
                 }),
         )

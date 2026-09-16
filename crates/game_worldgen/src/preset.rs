@@ -7,6 +7,36 @@
 /// spacing — both need the same number.
 pub const METERS_PER_QUAD: f32 = 2.0;
 
+/// Vertical exaggeration for the visual (mesh) height of land — elevation is
+/// normalized `0..1.2`, which reads as nearly flat at `METERS_PER_QUAD`'s 2m
+/// horizontal scale without one. Lives here (not just in `game_render`) so
+/// `image_export::terrain_paint_color`'s slope calculation and
+/// `game_render::map`'s actual mesh use the exact same number — computing a
+/// steepness that doesn't match what gets drawn would defeat the point of
+/// slope-based rock blending.
+pub const HEIGHT_SCALE: f32 = 60.0;
+
+/// Extra height multiplier for cells `elevation::ElevationMaps::mountain_mask`
+/// already flags as rugged (`0..1`, independent of raw elevation) — mountains
+/// end up dramatically taller than a flat, uniform `HEIGHT_SCALE` would give
+/// them, while ordinary rolling land stays modest. `visual_height` is the one
+/// function that applies this; nothing else should reimplement the formula.
+pub const MOUNTAIN_HEIGHT_BOOST: f32 = 1.8;
+
+/// Flat-clipped visual depths for ocean cells — a real ocean floor's exact
+/// depth is unbounded/arbitrary in this model, so instead of following raw
+/// (often barely-below-`sea_level`, noisy) elevation, these give a clean
+/// two-step "continental shelf." Lakes are *not* in this list on purpose —
+/// see `HydrologyMaps::filled`, which gives each lake its own correct
+/// natural water level instead of a fixed clip.
+pub const COAST_FLOOR_DEPTH: f32 = 4.0;
+pub const OCEAN_FLOOR_DEPTH: f32 = 16.0;
+
+/// How far below a lake basin's true (`HydrologyMaps::filled`) pour-point
+/// elevation the water surface sits — just enough that the water plane
+/// doesn't z-fight with the lakebed itself, not a real depth.
+pub const LAKE_SURFACE_OFFSET: f32 = 0.05;
+
 /// Tunable knobs for [`crate::generate`]. Named presets below are just
 /// different values for these — add a preset by adding a `const`, not by
 /// branching generation logic on a preset enum.

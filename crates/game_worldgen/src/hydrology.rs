@@ -9,6 +9,15 @@ pub struct HydrologyMaps {
     /// pixel) — see `generate`'s priority-flood pass.
     pub is_lake: Grid<bool>,
     pub is_river: Grid<bool>,
+    /// The priority-flood pass's "filled" elevation for every cell — for a
+    /// lake cell specifically, this is the basin's actual pour-point
+    /// elevation, i.e. the real, correct water surface height for that
+    /// *entire* lake (flat, like a real lake, and different from one lake to
+    /// the next depending on where its basin sits). `image_export` and
+    /// `game_render::map` use this instead of an arbitrary fixed depth the
+    /// way ocean cells get clipped to — a lake's correct level was already
+    /// computed here, no need to override it with a guess.
+    pub filled: Grid<f32>,
 }
 
 /// One entry in the priority-flood frontier: a cell paired with its `filled`
@@ -191,5 +200,6 @@ pub fn generate(
         is_ocean,
         is_lake,
         is_river,
+        filled,
     }
 }

@@ -30,6 +30,11 @@ struct Args {
     humidity: Option<f32>,
     temperature: Option<f32>,
     no_correct: bool,
+    /// Also writes `<out>.paint.png`: `image_export::terrain_paint_map`,
+    /// the exact per-cell coloring (slope rock blend, beach blend,
+    /// biome-neighbor blend) `game_render::map` paints onto the 3D terrain
+    /// mesh — the only non-interactive way to check that math.
+    paint: bool,
     nation_count: usize,
     out: PathBuf,
 }
@@ -46,6 +51,7 @@ impl Default for Args {
             humidity: None,
             temperature: None,
             no_correct: false,
+            paint: false,
             nation_count: 8,
             out: PathBuf::from("world.png"),
         }
@@ -83,6 +89,7 @@ fn parse_args() -> Result<Args, String> {
                 args.nation_count = value()?.parse().map_err(|e| format!("--nations: {e}"))?
             }
             "--no-correct" => args.no_correct = true,
+            "--paint" => args.paint = true,
             "--out" => args.out = PathBuf::from(value()?),
             "--list-presets" => {
                 for p in preset::ALL {
@@ -105,7 +112,7 @@ fn main() {
             eprintln!(
                 "usage: generate --preset <name> --seed <u64> --width <n> --height <n> \
                  [--continents <n>] [--sea-level <0-1>] [--humidity <-1-1>] \
-                 [--temperature <-1-1>] [--nations <n>] [--no-correct] --out <path>"
+                 [--temperature <-1-1>] [--nations <n>] [--no-correct] [--paint] --out <path>"
             );
             eprintln!("       generate --list-presets");
             std::process::exit(1);
@@ -177,4 +184,18 @@ fn main() {
         .save(&elevation_path)
         .unwrap_or_else(|err| panic!("failed to write {}: {err}", elevation_path.display()));
     println!("wrote {}", elevation_path.display());
+
+    if args.paint {
+        let paint_path = args.out.with_extension("paint.png");
+        let paint_image = image_export::terrain_paint_map(
+            args.width,
+            args.height,
+            &world,
+            chosen_preset.sea_level,
+        );
+        paint_image
+            .save(&paint_path)
+            .unwrap_or_else(|err| panic!("failed to write {}: {err}", paint_path.display()));
+        println!("wrote {}", paint_path.display());
+    }
 }

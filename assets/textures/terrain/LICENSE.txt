@@ -1,0 +1,14 @@
+atlas.png is a 2x2 composite of four tiles from Kenney's "Retro Textures
+Fantasy" pack (https://kenney.nl/assets/retro-textures-fantasy), licensed
+CC0 1.0 (public domain, no attribution required):
+http://creativecommons.org/publicdomain/zero/1.0/
+
+Tiles used (each originally 64x64px), by atlas quadrant:
+  top-left     (Land/Grass) - PNG/floor_ground_grass.png
+  top-right    (Sand)       - PNG/floor_ground_sand.png
+  bottom-left  (Rock)       - PNG/floor_stone.png
+  bottom-right (Water)      - PNG/floor_ground_water.png
+
+See crate `game_render::map` (SurfaceClass/terrain atlas UV selection) and
+`game_worldgen::image_export::terrain_paint_color` (surface classification)
+for how each quadrant gets selected per mesh vertex.
